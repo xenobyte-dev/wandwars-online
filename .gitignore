@@ -1,0 +1,8 @@
+# Decompiled game code - reference only, never commit/distribute
+ref/
+
+bin/
+obj/
+dist/
+*.user
+.vs/
