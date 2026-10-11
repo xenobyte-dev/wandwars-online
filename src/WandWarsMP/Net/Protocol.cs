@@ -19,6 +19,16 @@ namespace WandWarsMP.Net
         Frame = 22,         // (unreliable) u32 tick, u8 n, n x (u8 player, i8 mx, i8 my)
         Ability = 23,       // u8 player, u8 ability, i8 lx, i8 ly (lastMoveDirection)
         Snapshot = 24,      // (unreliable) u32 tick, players, balls
+        BallSpawn = 25,     // u16 id, vec2 pos, vec2 vel, u8 owner, u8 normSpeed, f32 size
+        BallDespawn = 26,   // u16 id
+        Damage = 27,        // u8 target, u8 amount, Source, u8 preHealth, bool died
+        Death = 28,         // u8 target, Source (death not caused by TakeDamage)
+        Catch = 29,         // u8 player, u16 ball, vec2 ballOffset, vec2 rbCatchPos, vec2 preVel
+        Launch = 30,        // u8 player, u16 ball, vec2 dir, u8 normSpeed
+        Release = 31,       // u8 player, vec2 dir, u8 n, n x (u16 ball, u8 normSpeed)
+        Hex = 32,           // u8 target, f32 duration
+        RoundWinner = 33,   // u8 round, u8 winner(255 none), u8 n, n x (u8 player, i32 score)
+        RoundOver = 34,     // u8 round
     }
 
     public static class Protocol

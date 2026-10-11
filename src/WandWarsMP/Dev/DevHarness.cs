@@ -112,7 +112,7 @@ namespace WandWarsMP.Dev
                 if (!haveStart) { start = pos; haveStart = true; }
                 maxDist = Mathf.Max(maxDist, Vector3.Distance(start, pos));
                 string ents = string.Join(" ", match.Players.Select(x =>
-                    x.PrimaryEntity != null ? $"P{(int)x.PlayerNumber + 1}{(Vector2)x.PrimaryEntity.transform.position}" : $"P{(int)x.PlayerNumber + 1}-").ToArray());
+                    (x.PrimaryEntity != null ? $"P{(int)x.PlayerNumber + 1}{(Vector2)x.PrimaryEntity.transform.position}" : $"P{(int)x.PlayerNumber + 1}-") + $"[{x.Score.Value}]").ToArray());
                 Plugin.Trace($"DevHarness: host round={match.RoundNumber} rtt={Net.NetSession.Instance.GetRtt(remote.Peer):F1}ms {ents}");
             }
             Plugin.Trace($"DevHarness: RESULT remote max displacement {maxDist:F2}, hexes cast {p.HexesCast}");
@@ -138,7 +138,7 @@ namespace WandWarsMP.Dev
                 nextLog = Time.realtimeSinceStartup + 1f;
                 var sync = Sync.MatchSync.Instance;
                 string ents = string.Join(" ", Game.Match.Players.Select(p =>
-                    p.PrimaryEntity != null ? $"P{(int)p.PlayerNumber + 1}{(Vector2)p.PrimaryEntity.transform.position}" : $"P{(int)p.PlayerNumber + 1}-").ToArray());
+                    (p.PrimaryEntity != null ? $"P{(int)p.PlayerNumber + 1}{(Vector2)p.PrimaryEntity.transform.position}" : $"P{(int)p.PlayerNumber + 1}-") + $"[{p.Score.Value}]").ToArray());
                 Plugin.Trace($"DevHarness: client round={Game.Match.RoundNumber} avgCorr={sync.AvgCorrection:F3} snaps={sync.Snaps} {ents}");
             }
             Plugin.Trace($"DevHarness: client done, status={net.Status} rtt={net.HostRttMs:F1}ms");

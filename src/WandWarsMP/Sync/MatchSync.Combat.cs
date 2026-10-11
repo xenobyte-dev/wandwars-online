@@ -1,0 +1,483 @@
+using System.Collections.Generic;
+using HarmonyLib;
+using Staple;
+using UnityEngine;
+using WandWars;
+using WandWarsMP.Net;
+
+namespace WandWarsMP.Sync
+{
+    /// <summary>
+    /// Host-authoritative outcomes: ball lifecycle/possession, damage and deaths, hexes, round winners.
+    /// Clients block the corresponding local logic (see CombatPatches) and apply these messages instead.
+    /// </summary>
+    public sealed partial class MatchSync
+    {
+        private const byte SrcNone = 0, SrcBall = 1, SrcPlayer = 2;
+
+        private readonly Dictionary<Ball, ushort> ballIds = new Dictionary<Ball, ushort>();
+        private readonly Dictionary<ushort, Ball> ballsById = new Dictionary<ushort, Ball>();
+        private ushort nextBallId = 1;
+        private readonly List<Ball> scratchBalls = new List<Ball>();
+
+        // client: round winners received from host
+        private readonly Dictionary<int, RoundWinnerData> roundWinners = new Dictionary<int, RoundWinnerData>();
+        private readonly HashSet<int> roundsOver = new HashSet<int>();      // client: host said round ended
+        private readonly HashSet<int> roundsAwaitingScore = new HashSet<int>(); // client: used local winner
+        private int hostRoundOverSent = -1;
+
+        public sealed class RoundWinnerData
+        {
+            public byte Winner;
+            public Dictionary<byte, int> Scores = new Dictionary<byte, int>();
+        }
+
+        /// <summary>True while the client is creating a ball the host told it about.</summary>
+        internal static bool SpawningNetBall;
+        /// <summary>Host: nesting depth of GameEntity.TakeDamage (deaths inside it ride on the Damage message).</summary>
+        internal static int DamageDepth;
+
+        private void ResetCombat()
+        {
+            ballIds.Clear();
+            ballsById.Clear();
+            roundWinners.Clear();
+            roundsOver.Clear();
+            roundsAwaitingScore.Clear();
+            hostRoundOverSent = -1;
+            nextBallId = 1;
+            DamageDepth = 0;
+        }
+
+        // ================= balls (host) =================
+
+        internal ushort HostBallId(Ball ball)
+        {
+            if (ball == null) return 0;
+            if (ballIds.TryGetValue(ball, out var id)) return id;
+            id = nextBallId++;
+            if (nextBallId == 0) nextBallId = 1;
+            ballIds[ball] = id;
+            ballsById[id] = ball;
+            var rb = ball.Rigidbody2D;
+            var w = net.Begin(Msg.BallSpawn);
+            w.U16(id);
+            w.Vec2(rb.position);
+            w.Vec2(rb.velocity);
+            w.U8(OwnerNum(ball.Owner));
+            w.U8((byte)ball.NormalizedSpeed);
+            w.F32(ball.Size);
+            net.Broadcast(w, true);
+            return id;
+        }
+
+        private static byte OwnerNum(SpellOwner owner)
+        {
+            var e = owner?.Entity;
+            return e == null ? NoPlayer : PlayerNum(e);
+        }
+
+        private void HostTrackBalls()
+        {
+            foreach (var b in Ball.Balls) HostBallId(b);
+            scratchBalls.Clear();
+            foreach (var kv in ballIds)
+                if (kv.Key == null || !kv.Key.isActiveAndEnabled) scratchBalls.Add(kv.Key);
+            foreach (var b in scratchBalls)
+            {
+                ushort id = ballIds[b];
+                ballIds.Remove(b);
+                ballsById.Remove(id);
+                var w = net.Begin(Msg.BallDespawn);
+                w.U16(id);
+                net.Broadcast(w, true);
+            }
+        }
+
+        private void WriteBallSnapshot(NetWriter w)
+        {
+            w.U8((byte)ballIds.Count);
+            foreach (var kv in ballIds)
+            {
+                var b = kv.Key;
+                var rb = b.Rigidbody2D;
+                w.U16(kv.Value);
+                w.Vec2(rb.position);
+                w.Vec2(rb.velocity);
+                w.U8((byte)b.NormalizedSpeed);
+                w.F32(b.Size);
+                w.U8((byte)b.State);
+                w.U8(OwnerNum(b.Owner));
+            }
+        }
+
+        // ================= balls (client) =================
+
+        private void ReadBallSnapshot(ref NetReader r)
+        {
+            int n = r.U8();
+            for (int i = 0; i < n; i++)
+            {
+                ushort id = r.U16();
+                Vector2 pos = r.Vec2(), vel = r.Vec2();
+                int speed = r.U8();
+                float size = r.F32();
+                var state = (Ball.BallState)r.U8();
+                byte owner = r.U8();
+                if (!ballsById.TryGetValue(id, out var b) || b == null) continue;
+                var rb = b.Rigidbody2D;
+                bool held = b.CurrentCatchSpell != null;
+                if (!held)
+                {
+                    Vector2 err = pos - rb.position;
+                    if (err.magnitude > SnapDistance) rb.position = pos; else rb.position += err * PosBlend;
+                    rb.velocity = vel;
+                }
+                b.NormalizedSpeed = speed;
+                if (Mathf.Abs(b.Size - size) > 0.01f) b.Size = size;
+                if (b.State != state) b.SetState(state);
+                if (OwnerNum(b.Owner) != owner && !held)
+                {
+                    var pc = owner == NoPlayer ? null : EntityOf(owner);
+                    b.Owner = pc != null ? pc.SpellOwner : null;
+                }
+            }
+        }
+
+        private void OnBallSpawn(ref NetReader r)
+        {
+            ushort id = r.U16();
+            Vector2 pos = r.Vec2(), vel = r.Vec2();
+            byte owner = r.U8();
+            int speed = r.U8();
+            float size = r.F32();
+            if (ballsById.ContainsKey(id)) return;
+            Ball b;
+            SpawningNetBall = true;
+            try { b = Staple.Scene.InstantiateInScene<Ball>(Game.GlobalResources.BallPrefab, pos, Quaternion.identity); }
+            finally { SpawningNetBall = false; }
+            ballsById[id] = b;
+            ballIds[b] = id;
+            var pc = owner == NoPlayer ? null : EntityOf(owner);
+            if (pc != null) b.Owner = pc.SpellOwner;
+            b.NormalizedSpeed = speed;
+            b.Size = size;
+            b.Rigidbody2D.velocity = vel;
+        }
+
+        private void OnBallDespawn(ref NetReader r)
+        {
+            ushort id = r.U16();
+            if (!ballsById.TryGetValue(id, out var b)) return;
+            ballsById.Remove(id);
+            if (b == null) return;
+            ballIds.Remove(b);
+            if (b.TrailParticles != null) Object.Destroy(b.TrailParticles.gameObject);
+            Object.Destroy(b.gameObject);
+        }
+
+        private Ball BallById(ushort id) => ballsById.TryGetValue(id, out var b) ? b : null;
+
+        // ================= catch / launch / release =================
+
+        internal void HostOnCatch(CatchSpell cs, CatchSpell.BallInfo info, Vector2 ballOffset)
+        {
+            byte num = OwnerNum(cs.Owner);
+            if (num == NoPlayer) return;
+            var w = net.Begin(Msg.Catch);
+            w.U8(num);
+            w.U16(HostBallId(info.Ball));
+            w.Vec2(ballOffset);
+            w.Vec2(info.PreCatchVelocity);
+            net.Broadcast(w, true);
+        }
+
+        internal void HostOnLaunch(CatchSpell cs, CatchSpell.BallInfo info)
+        {
+            byte num = OwnerNum(cs.Owner);
+            if (num == NoPlayer || info.Ball == null) return;
+            var w = net.Begin(Msg.Launch);
+            w.U8(num);
+            w.U16(HostBallId(info.Ball));
+            w.Vec2(cs.Direction);
+            w.U8((byte)info.Ball.NormalizedSpeed);
+            net.Broadcast(w, true);
+        }
+
+        internal void HostOnRelease(CatchSpell cs, List<Ball> released)
+        {
+            byte num = OwnerNum(cs.Owner);
+            if (num == NoPlayer) return;
+            var w = net.Begin(Msg.Release);
+            w.U8(num);
+            w.Vec2(cs.Direction);
+            w.U8((byte)released.Count);
+            foreach (var b in released)
+            {
+                w.U16(HostBallId(b));
+                w.U8((byte)b.NormalizedSpeed);
+            }
+            net.Broadcast(w, true);
+        }
+
+        private void OnCatch(ref NetReader r)
+        {
+            var pc = EntityOf(r.U8());
+            var ball = BallById(r.U16());
+            Vector2 offset = r.Vec2(), preVel = r.Vec2();
+            if (pc == null || ball == null || pc.CatchSpell == null) return;
+            var cs = pc.CatchSpell;
+            // Recreate the host's pre-catch geometry so HandleCatch's own checks pass.
+            ball.UnlockOwner();
+            ball.LastCatchTimeStamp = -1f;
+            Vector2 p = (Vector2)cs.transform.position + offset;
+            ball.transform.position = p;
+            ball.Rigidbody2D.position = p;
+            ball.Rigidbody2D.velocity = preVel;
+            int before = cs.HeldBalls.Count;
+            BallReplay.Active = true;
+            try { Traverse.Create(cs).Method("HandleCatch", new CatchSpell.BallInfo(ball)).GetValue(); }
+            finally { BallReplay.Active = false; }
+            if (cs.HeldBalls.Count == before) Plugin.Log.LogWarning("Sync: catch replay rejected by local checks");
+        }
+
+        private void OnLaunch(ref NetReader r)
+        {
+            var pc = EntityOf(r.U8());
+            var ball = BallById(r.U16());
+            Vector2 dir = r.Vec2();
+            int speed = r.U8();
+            if (pc == null || ball == null || pc.CatchSpell == null) return;
+            var cs = pc.CatchSpell;
+            var info = cs.HeldBalls.Find(x => x.Ball == ball);
+            cs.Direction = dir;
+            if (info != null)
+            {
+                BallReplay.Active = true;
+                try { Traverse.Create(cs).Method("Launch", info).GetValue(); }
+                finally { BallReplay.Active = false; }
+                cs.HeldBalls.Remove(info);
+            }
+            else
+            {
+                ball.UnlockOwner();
+                ball.CurrentCatchSpell = null;
+                ball.SetState(Ball.BallState.Normal);
+                ball.SetDirection(dir);
+            }
+            ball.NormalizedSpeed = speed;
+        }
+
+        private void OnRelease(ref NetReader r)
+        {
+            var pc = EntityOf(r.U8());
+            Vector2 dir = r.Vec2();
+            int n = r.U8();
+            var speeds = new Dictionary<Ball, int>();
+            for (int i = 0; i < n; i++)
+            {
+                var b = BallById(r.U16());
+                int s = r.U8();
+                if (b != null) speeds[b] = s;
+            }
+            if (pc == null || pc.CatchSpell == null) return;
+            var cs = pc.CatchSpell;
+            cs.Direction = dir;
+            BallReplay.Active = true;
+            try { cs.ReleaseAllBalls(); }
+            finally { BallReplay.Active = false; }
+            foreach (var kv in speeds)
+            {
+                kv.Key.NormalizedSpeed = kv.Value;
+                if (kv.Key.CurrentCatchSpell == cs) // wasn't in the local held list: release manually
+                {
+                    kv.Key.UnlockOwner();
+                    kv.Key.CurrentCatchSpell = null;
+                    kv.Key.SetState(Ball.BallState.Normal);
+                    kv.Key.SetDirection(dir);
+                }
+            }
+        }
+
+        // ================= damage / death =================
+
+        private void WriteSource(NetWriter w, GameObject src)
+        {
+            Ball ball = src != null ? src.GetComponent<Ball>() : null;
+            if (ball != null) { w.U8(SrcBall); w.U16(HostBallId(ball)); return; }
+            ISpell spell = src != null ? src.GetComponent(typeof(ISpell)) as ISpell : null;
+            byte owner = spell != null ? OwnerNum(spell.Owner) : NoPlayer;
+            if (owner != NoPlayer) { w.U8(SrcPlayer); w.U16(owner); return; }
+            w.U8(SrcNone); w.U16(0);
+        }
+
+        /// <summary>Client: a GameObject that gives the game the same kill attribution as on the host.</summary>
+        private GameObject ReadSource(ref NetReader r, GameEntity target)
+        {
+            byte kind = r.U8();
+            ushort id = r.U16();
+            if (kind == SrcBall)
+            {
+                var b = BallById(id);
+                if (b != null) return b.gameObject;
+            }
+            // TODO: spell kills (attribute to the caster); falls back to self (no kill credit).
+            return target.gameObject;
+        }
+
+        internal void HostOnDamage(GameEntity target, int amount, GameObject src, int preHealth, bool died)
+        {
+            byte num = PlayerNum(target);
+            Plugin.Trace($"Sync[H]: damage P{num + 1} amt={amount} src={(src != null ? src.name : "null")} pre={preHealth} died={died}");
+            if (num == NoPlayer) return;
+            var w = net.Begin(Msg.Damage);
+            w.U8(num);
+            w.U8((byte)Mathf.Clamp(amount, 0, 255));
+            WriteSource(w, src);
+            w.U8((byte)Mathf.Clamp(preHealth, 0, 255));
+            w.Bool(died);
+            net.Broadcast(w, true);
+        }
+
+        private static string killSource(GameObject src) => src != null ? src.name : "null";
+
+        internal void HostOnDeath(GameEntity target, GameObject src)
+        {
+            byte num = PlayerNum(target);
+            Plugin.Trace($"Sync[H]: death P{num + 1} src={(killSource(src))}");
+            if (num == NoPlayer) return;
+            var w = net.Begin(Msg.Death);
+            w.U8(num);
+            WriteSource(w, src);
+            net.Broadcast(w, true);
+        }
+
+        private void OnDamage(ref NetReader r)
+        {
+            var pc = EntityOf(r.U8());
+            int amount = r.U8();
+            if (pc == null) { r.U8(); r.U16(); return; }
+            var src = ReadSource(ref r, pc);
+            int preHealth = r.U8();
+            bool died = r.Bool();
+            using (Replay.Begin())
+            {
+                pc.Health = preHealth;
+                pc.SetImmunityTime(0f);
+                pc.TakeDamage(amount, src);
+                bool stillAlive = pc != null && pc.Player != null && pc.Player.Entities.Contains(pc);
+                Plugin.Trace($"Sync[C]: damage P{(int)pc.Player.PlayerNumber + 1} amt={amount} src={src.name} died={died} aliveAfterReplay={stillAlive}");
+                if (died && stillAlive) pc.Die(src);
+            }
+        }
+
+        private void OnDeath(ref NetReader r)
+        {
+            var pc = EntityOf(r.U8());
+            if (pc == null) { r.U8(); r.U16(); return; }
+            var src = ReadSource(ref r, pc);
+            Plugin.Trace($"Sync[C]: death P{(int)pc.Player.PlayerNumber + 1} src={src.name}");
+            using (Replay.Begin()) pc.Die(src);
+        }
+
+        // ================= hex =================
+
+        internal void HostOnHex(GameEntity target, float duration)
+        {
+            byte num = PlayerNum(target);
+            if (num == NoPlayer) return;
+            var w = net.Begin(Msg.Hex);
+            w.U8(num);
+            w.F32(duration);
+            net.Broadcast(w, true);
+        }
+
+        private void OnHex(ref NetReader r)
+        {
+            var pc = EntityOf(r.U8());
+            float duration = r.F32();
+            if (pc == null) return;
+            using (Replay.Begin())
+            {
+                if (pc.AnyRoutinesRunning("hex")) pc.StopAllRoutines("hex");
+                pc.StartRoutine("hex", HexSpell.TransformIntoAvatar(pc, pc.HexPrefab, duration));
+            }
+            if (pc.Player != null) pc.Player.Hexed++;
+        }
+
+        // ================= rounds =================
+
+        internal void HostOnRoundWinner(MatchBase match, IScoreProvider winner)
+        {
+            var w = net.Begin(Msg.RoundWinner);
+            w.U8((byte)match.RoundNumber);
+            var wp = winner as Player;
+            w.U8(wp == null ? NoPlayer : (byte)wp.PlayerNumber);
+            w.U8((byte)match.Players.Count);
+            foreach (var p in match.Players)
+            {
+                w.U8((byte)p.PlayerNumber);
+                w.I32(p.Score.Value);
+            }
+            net.Broadcast(w, true);
+        }
+
+        internal void HostOnRoundOver(MatchBase match)
+        {
+            if (hostRoundOverSent == match.RoundNumber) return;
+            hostRoundOverSent = match.RoundNumber;
+            var w = net.Begin(Msg.RoundOver);
+            w.U8((byte)match.RoundNumber);
+            net.Broadcast(w, true);
+            Plugin.Trace($"Sync[H]: round {match.RoundNumber} over");
+        }
+
+        internal bool ClientRoundOver(int round) => roundsOver.Contains(round);
+
+        private void OnRoundWinner(ref NetReader r)
+        {
+            int round = r.U8();
+            var d = new RoundWinnerData { Winner = r.U8() };
+            int n = r.U8();
+            for (int i = 0; i < n; i++) d.Scores[r.U8()] = r.I32();
+            Plugin.Trace($"Sync[C]: round {round} winner P{d.Winner + 1}");
+            if (roundsAwaitingScore.Remove(round)) ApplyScores(d); // we already used a local guess
+            else roundWinners[round] = d;
+        }
+
+        internal static void ApplyScores(RoundWinnerData d)
+        {
+            if (Game.Match == null) return;
+            foreach (var p in Game.Match.Players)
+                if (d.Scores.TryGetValue((byte)p.PlayerNumber, out int s) && p.Score.Value != s) p.Score.Value = s;
+        }
+
+        /// <summary>Client: host's result for this round, or null (caller then uses the local result and
+        /// absolute scores get applied when the host's message lands).</summary>
+        internal RoundWinnerData TakeRoundWinner(int round)
+        {
+            if (roundWinners.TryGetValue(round, out var d)) { roundWinners.Remove(round); return d; }
+            roundsAwaitingScore.Add(round);
+            return null;
+        }
+
+        private void OnCombatMessage(Msg msg, ref NetReader r)
+        {
+            switch (msg)
+            {
+                case Msg.BallSpawn: OnBallSpawn(ref r); break;
+                case Msg.BallDespawn: OnBallDespawn(ref r); break;
+                case Msg.Catch: OnCatch(ref r); break;
+                case Msg.Launch: OnLaunch(ref r); break;
+                case Msg.Release: OnRelease(ref r); break;
+                case Msg.Damage: OnDamage(ref r); break;
+                case Msg.Death: OnDeath(ref r); break;
+                case Msg.Hex: OnHex(ref r); break;
+                case Msg.RoundWinner: OnRoundWinner(ref r); break;
+                case Msg.RoundOver:
+                    roundsOver.Add(r.U8());
+                    break;
+            }
+        }
+    }
+}

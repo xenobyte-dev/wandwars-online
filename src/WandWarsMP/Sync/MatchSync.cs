@@ -13,7 +13,7 @@ namespace WandWarsMP.Sync
     /// every actor call (moves each frame, abilities reliably) and periodic state snapshots. Clients
     /// build the same match, strip local control from every entity, and replay what the host sends.
     /// </summary>
-    public sealed class MatchSync : MonoBehaviour
+    public sealed partial class MatchSync : MonoBehaviour
     {
         public static MatchSync Instance { get; private set; }
 
@@ -60,6 +60,11 @@ namespace WandWarsMP.Sync
         {
             net = NetSession.Ensure();
             net.Message += OnMessage;
+            GameEntity.GameEntityDied += (e, src) =>
+            {
+                if (Online && Game.Match != null && e != null)
+                    Plugin.Trace($"Sync[{(IsHost ? "H" : "C")}]: DIED {e.name} player={(e.SpellOwner?.Player != null ? "P" + ((int)e.SpellOwner.Player.PlayerNumber + 1) : "-")} src={(src != null ? src.name : "null")}");
+            };
         }
 
         // ================= host =================
@@ -73,6 +78,7 @@ namespace WandWarsMP.Sync
             desc.Write(w);
             net.Broadcast(w, true);
             hostMoves.Clear();
+            ResetCombat();
             Plugin.Trace($"Sync: MatchStart sent ({config.MatchType} on '{level}', {players.Count} players, seed {seed})");
         }
 
@@ -112,7 +118,7 @@ namespace WandWarsMP.Sync
             net.Broadcast(w, true);
         }
 
-        private static byte PlayerNum(GameEntity e)
+        internal static byte PlayerNum(GameEntity e)
         {
             var player = e.SpellOwner?.Player;
             if (player == null || Game.Match == null || !Game.Match.Players.Contains(player)) return NoPlayer;
@@ -120,7 +126,7 @@ namespace WandWarsMP.Sync
             return (byte)player.PlayerNumber;
         }
 
-        private static sbyte Quant(float v) => (sbyte)Mathf.Clamp(Mathf.RoundToInt(v * 127f), -127, 127);
+        internal static sbyte Quant(float v) => (sbyte)Mathf.Clamp(Mathf.RoundToInt(v * 127f), -127, 127);
 
         private void LateUpdate()
         {
@@ -139,6 +145,7 @@ namespace WandWarsMP.Sync
             net.Broadcast(w, false);
             hostMoves.Clear();
 
+            HostTrackBalls();
             if (tick % SnapshotEveryFrames == 0) SendSnapshot();
         }
 
@@ -160,6 +167,7 @@ namespace WandWarsMP.Sync
                 w.Vec2(rb.position);
                 w.Vec2(rb.velocity);
             }
+            WriteBallSnapshot(w);
             net.Broadcast(w, false);
         }
 
@@ -175,6 +183,7 @@ namespace WandWarsMP.Sync
                 case Msg.Frame: OnFrame(ref r); break;
                 case Msg.Ability: OnAbility(ref r); break;
                 case Msg.Snapshot: OnSnapshot(ref r); break;
+                default: OnCombatMessage(msg, ref r); break;
             }
         }
 
@@ -184,6 +193,7 @@ namespace WandWarsMP.Sync
             pendingStart = desc;
             roundSpawns.Clear();
             clientMoves.Clear();
+            ResetCombat();
             haveFrame = haveSnapshot = false;
             Snaps = 0;
             AvgCorrection = 0;
@@ -216,7 +226,7 @@ namespace WandWarsMP.Sync
             }
         }
 
-        private static PlayerController EntityOf(byte num)
+        internal static PlayerController EntityOf(byte num)
         {
             var m = Game.Match;
             if (m == null) return null;
@@ -300,6 +310,7 @@ namespace WandWarsMP.Sync
                 else rb.position += err * PosBlend;
                 rb.velocity = vel;
             }
+            ReadBallSnapshot(ref r);
         }
     }
 }
