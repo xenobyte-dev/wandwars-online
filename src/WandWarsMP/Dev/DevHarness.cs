@@ -12,8 +12,7 @@ namespace WandWarsMP.Dev
 {
     /// <summary>
     /// Headless-ish test driver. Activated by a file "wwmp_autotest.txt" in the game root.
-    /// File lines: key=value (mode=census|..., seconds=30, quit=true).
-    /// Boots straight into a bot-only match, samples the scene, writes BepInEx/wwmp_census.txt, quits.
+    /// File lines: key=value. mode=census|nethost|netclient, seconds, quit=true|false, stage, bots, port, connect.
     /// </summary>
     public class DevHarness : MonoBehaviour
     {
@@ -47,24 +46,89 @@ namespace WandWarsMP.Dev
             Plugin.Trace($"DevHarness: lobby reached after {Time.realtimeSinceStartup - t0:F1}s");
             yield return new WaitForSeconds(2f);
 
-            string stage = Get("stage", "");
-            if (stage == "") stage = Stages.GetRandomStage();
-            int bots = int.Parse(Get("bots", "4"));
-            var players = new List<Player>();
-            var chars = Game.GlobalResources.GetCharacters().ToList();
-            for (int i = 0; i < bots; i++)
-                players.Add(new Player(chars[i % chars.Count], (PlayerNumber)i, null, null, isBot: true));
-
-            Plugin.Trace($"DevHarness: starting Deathmatch on {stage} with {bots} bots");
-            Game.GameStateMachine.Start(new Deathmatch(stage, players, new MatchConfig { MatchType = MatchType.Deathmatch }));
-
-            while (!(Game.State is MatchBase)) yield return null;
-            yield return new WaitForSeconds(5f);
-
-            if (Get("mode", "census") == "census")
-                yield return StartCoroutine(Census(float.Parse(Get("seconds", "20"))));
+            switch (Get("mode", "census"))
+            {
+                case "census":
+                    yield return StartCoroutine(StartBotMatch(int.Parse(Get("bots", "4")), null));
+                    yield return new WaitForSeconds(5f);
+                    yield return StartCoroutine(Census(float.Parse(Get("seconds", "20"))));
+                    break;
+                case "nethost":
+                    yield return StartCoroutine(NetHostScenario());
+                    break;
+                case "netclient":
+                    yield return StartCoroutine(NetClientScenario());
+                    break;
+            }
 
             if (Get("quit", "true") == "true") Application.Quit();
+        }
+
+        private string PickStage()
+        {
+            string stage = Get("stage", "");
+            return stage == "" ? Stages.GetRandomStage() : stage;
+        }
+
+        /// <summary>Starts a Deathmatch: optional remote devices take the first slots, bots fill the rest.</summary>
+        private IEnumerator StartBotMatch(int total, List<InControl.InputDevice> humans)
+        {
+            string stage = PickStage();
+            var players = new List<Player>();
+            var chars = Game.GlobalResources.GetCharacters().ToList();
+            for (int i = 0; i < total; i++)
+            {
+                bool human = humans != null && i < humans.Count;
+                players.Add(new Player(chars[i % chars.Count], (PlayerNumber)i, human ? humans[i] : null, null, isBot: !human));
+            }
+            Plugin.Trace($"DevHarness: starting Deathmatch on {stage}, {total} players ({humans?.Count ?? 0} human)");
+            Game.GameStateMachine.Start(new Deathmatch(stage, players, new MatchConfig { MatchType = MatchType.Deathmatch }));
+            while (!(Game.State is MatchBase)) yield return null;
+        }
+
+        private IEnumerator NetHostScenario()
+        {
+            var net = Net.NetSession.Ensure();
+            net.StartHost(int.Parse(Get("port", Net.Protocol.DefaultPort.ToString())));
+            float deadline = Time.realtimeSinceStartup + 30f;
+            while (net.Remotes.Count == 0 && Time.realtimeSinceStartup < deadline) yield return null;
+            if (net.Remotes.Count == 0) { Plugin.Trace("DevHarness: no client joined"); yield break; }
+
+            var remote = net.Remotes.Values.First();
+            yield return StartCoroutine(StartBotMatch(2, new List<InControl.InputDevice> { remote.Device }));
+            var match = (MatchBase)Game.State;
+            Player p = match.Players.First(x => x.InputDevice == remote.Device);
+
+            float end = Time.realtimeSinceStartup + float.Parse(Get("seconds", "20"));
+            Vector3 start = Vector3.zero;
+            bool haveStart = false;
+            float maxDist = 0;
+            while (Time.realtimeSinceStartup < end)
+            {
+                yield return new WaitForSeconds(1f);
+                if (p.PrimaryEntity == null) { Plugin.Trace("DevHarness: remote player has no entity"); continue; }
+                Vector3 pos = p.PrimaryEntity.transform.position;
+                if (!haveStart) { start = pos; haveStart = true; }
+                maxDist = Mathf.Max(maxDist, Vector3.Distance(start, pos));
+                Plugin.Trace($"DevHarness: remote pos={pos} rtt={Net.NetSession.Instance.GetRtt(remote.Peer):F1}ms hexes={p.HexesCast}");
+            }
+            Plugin.Trace($"DevHarness: RESULT remote max displacement {maxDist:F2}, hexes cast {p.HexesCast}");
+        }
+
+        private IEnumerator NetClientScenario()
+        {
+            var net = Net.NetSession.Ensure();
+            net.LocalName = "TestClient";
+            // Circle movement, tap A once a second.
+            net.Capture.Script = t => new Net.ScriptedInput
+            {
+                Move = new Vector2(Mathf.Cos(t), Mathf.Sin(t)),
+                Buttons = (t % 1f) < 0.1f ? Net.InputState.A : 0,
+            };
+            net.StartClient(Get("connect", "127.0.0.1"), int.Parse(Get("port", Net.Protocol.DefaultPort.ToString())));
+            float end = Time.realtimeSinceStartup + float.Parse(Get("seconds", "30"));
+            while (Time.realtimeSinceStartup < end) yield return null;
+            Plugin.Trace($"DevHarness: client done, status={net.Status} rtt={net.HostRttMs:F1}ms");
         }
 
         private IEnumerator Census(float seconds)
