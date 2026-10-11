@@ -27,6 +27,8 @@ namespace WandWarsMP
             Plugin.Root = new GameObject("_WandWarsMP");
             UnityEngine.Object.DontDestroyOnLoad(Plugin.Root);
             Plugin.Trace($"Game booted. Dev mode: {Dev.DevMode.Enabled}");
+            Net.NetSession.Ensure();
+            Plugin.Root.AddComponent<UI.OnlinePanel>();
             try { Dev.DevHarness.TryStart(Plugin.Root); }
             catch (Exception e) { Plugin.Trace("DevHarness failed: " + e); }
         }

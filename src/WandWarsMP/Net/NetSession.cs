@@ -61,29 +61,45 @@ namespace WandWarsMP.Net
             return Instance;
         }
 
-        private static float Clock() => Time.realtimeSinceStartup;
+        public static float Clock() => Time.realtimeSinceStartup;
 
-        public void StartHost(int port)
+        public void SetStatus(string s)
         {
-            Stop();
-            Transport = UdpTransport.Host(port, Clock);
+            Status = s;
+            Plugin.Trace("Net: " + s);
+        }
+
+        public void StartHost(int port) => StartHost(UdpTransport.Host(port, Clock), $"hosting on UDP {port}");
+
+        public void StartClient(string host, int port) =>
+            StartClient(UdpTransport.Connect(host, port, Clock), $"connecting to {host}:{port}");
+
+        public void StartHost(ITransport transport, string status)
+        {
+            CloseTransport();
+            Transport = transport;
             Hook();
             Role = NetRole.Host;
-            Status = $"hosting on UDP {port}";
-            Plugin.Trace("Net: " + Status);
+            SetStatus(status);
         }
 
-        public void StartClient(string host, int port)
+        public void StartClient(ITransport transport, string status)
         {
-            Stop();
-            Transport = UdpTransport.Connect(host, port, Clock);
+            CloseTransport();
+            Transport = transport;
             Hook();
             Role = NetRole.Client;
-            Status = $"connecting to {host}:{port}";
-            Plugin.Trace("Net: " + Status);
+            SetStatus(status);
         }
 
+        /// <summary>User-initiated: close the connection and leave any Steam lobby.</summary>
         public void Stop()
+        {
+            CloseTransport();
+            SteamLobby.Instance?.Leave();
+        }
+
+        private void CloseTransport()
         {
             if (Transport == null) return;
             foreach (var rp in Remotes.Values) DetachRemote(rp);
