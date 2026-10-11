@@ -60,6 +60,7 @@ namespace WandWarsMP.Sync
         {
             net = NetSession.Ensure();
             net.Message += OnMessage;
+            net.LocalInputSent += OnLocalInput;
             GameEntity.GameEntityDied += (e, src) =>
             {
                 if (Online && Game.Match != null && e != null)
@@ -79,6 +80,7 @@ namespace WandWarsMP.Sync
             net.Broadcast(w, true);
             hostMoves.Clear();
             ResetCombat();
+            ResetItems();
             Plugin.Trace($"Sync: MatchStart sent ({config.MatchType} on '{level}', {players.Count} players, seed {seed})");
         }
 
@@ -146,6 +148,7 @@ namespace WandWarsMP.Sync
             hostMoves.Clear();
 
             HostTrackBalls();
+            HostTrackItems();
             if (tick % SnapshotEveryFrames == 0) SendSnapshot();
         }
 
@@ -159,6 +162,7 @@ namespace WandWarsMP.Sync
             foreach (var p in list)
             {
                 w.U8((byte)p.PlayerNumber);
+                w.U16(LastInputSeqFor(p));
                 var e = p.PrimaryEntity;
                 var rb = e != null ? e.Rigidbody2D : null;
                 bool has = rb != null && e.gameObject.activeInHierarchy;
@@ -168,7 +172,85 @@ namespace WandWarsMP.Sync
                 w.Vec2(rb.velocity);
             }
             WriteBallSnapshot(w);
+            WriteItemSnapshot(w);
             net.Broadcast(w, false);
+        }
+
+        private ushort LastInputSeqFor(Player p)
+        {
+            foreach (var rp in net.Remotes.Values)
+                if (rp.Device == p.InputDevice && rp.HasInput) return rp.LastInputSeq;
+            return NoSeq;
+        }
+
+        // ================= client prediction =================
+
+        public const ushort NoSeq = 0xFFFF;
+        /// <summary>Client-side prediction of the local wizard (movement, catch, hex shot).</summary>
+        public static bool Predict = true;
+        private const float OwnBlend = 0.2f;
+
+        private byte localNum = NoPlayer;
+        private readonly ushort[] histSeq = new ushort[128];
+        private readonly Vector2[] histPos = new Vector2[128];
+        private byte prevButtons;
+        private PlayerController histEntity;
+        public float OwnAvgCorrection { get; private set; }
+
+        private static bool IsPredicted(byte ability) =>
+            ability == AbOne || ability == AbOneRelease || ability == AbThree || ability == AbThreeRelease;
+
+        /// <summary>Runs the same logic as the game's PlayerInput, immediately, on our own entity.</summary>
+        private void OnLocalInput(ushort seq, InputState s)
+        {
+            if (!Predict || !IsClient || Game.Match == null || localNum == NoPlayer) return;
+            var pc = EntityOf(localNum);
+            if (pc == null || !pc.gameObject.activeInHierarchy || pc.Rigidbody2D == null) { prevButtons = s.Buttons; return; }
+            if (pc != histEntity)
+            {
+                // New life (respawn / new round): old positions mean nothing.
+                histEntity = pc;
+                for (int i = 0; i < histSeq.Length; i++) histSeq[i] = NoSeq;
+            }
+            histSeq[seq & 127] = seq;
+            histPos[seq & 127] = pc.Rigidbody2D.position;
+            if (!PlayerInput.Enabled || SingletonBehaviour<Staple.GameTime>.Instance.Paused) { prevButtons = s.Buttons; return; }
+
+            Vector2 dir = new Vector2(s.MoveX / 127f, s.MoveY / 127f);
+            dir = dir.sqrMagnitude < 0.25f ? Vector2.zero : dir.normalized;
+            int pressed = s.Buttons & ~prevButtons, released = prevButtons & ~s.Buttons;
+            prevButtons = s.Buttons;
+            using (Replay.Begin())
+            {
+                if (dir != Vector2.zero) pc.Move(dir);
+                if ((pressed & InputState.A) != 0) pc.AbilityOne();
+                else if ((released & InputState.A) != 0) pc.AbilityOneRelease();
+                else if ((pressed & InputState.B) != 0) { /* ultimate: host-driven */ }
+                else if ((pressed & InputState.X) != 0) pc.AbilityThree();
+                if ((released & InputState.X) != 0) pc.AbilityThreeRelease();
+            }
+        }
+
+        /// <summary>Host position is for input seq N; compare against where we were when we sent N.</summary>
+        /// <summary>Dev diagnostic: mean error if history were aligned at seq+k, k = -2..+3.</summary>
+        public readonly float[] AlignErr = new float[6];
+
+        private void Reconcile(Rigidbody2D rb, Vector2 hostPos, ushort seq)
+        {
+            if (seq != NoSeq)
+                for (int k = -2; k <= 3; k++)
+                {
+                    ushort q = (ushort)(seq + k);
+                    if (histSeq[q & 127] != q) continue;
+                    AlignErr[k + 2] = AlignErr[k + 2] * 0.98f + (hostPos - histPos[q & 127]).magnitude * 0.02f;
+                }
+            Vector2 err;
+            if (seq != NoSeq && histSeq[seq & 127] == seq) err = hostPos - histPos[seq & 127];
+            else err = hostPos - rb.position;
+            float mag = err.magnitude;
+            OwnAvgCorrection = OwnAvgCorrection * 0.95f + mag * 0.05f;
+            if (mag > SnapDistance) { rb.position = hostPos; Snaps++; }
+            else rb.position += err * OwnBlend;
         }
 
         // ================= client =================
@@ -192,9 +274,13 @@ namespace WandWarsMP.Sync
             Plugin.Trace($"Sync: MatchStart received ({desc.Type} on '{desc.Level}', {desc.Players.Count} players)");
             pendingStart = desc;
             ClientLeaveScoreScreen();
+            localNum = NoPlayer;
+            foreach (var p in desc.Players)
+                if (!p.IsBot && p.Owner == net.LocalSlot) localNum = p.Number;
             roundSpawns.Clear();
             clientMoves.Clear();
             ResetCombat();
+            ResetItems();
             haveFrame = haveSnapshot = false;
             Snaps = 0;
             AvgCorrection = 0;
@@ -220,7 +306,7 @@ namespace WandWarsMP.Sync
             {
                 foreach (var kv in clientMoves)
                 {
-                    if (kv.Value == Vector2.zero) continue;
+                    if (kv.Value == Vector2.zero || (Predict && kv.Key == localNum)) continue;
                     var pc = EntityOf(kv.Key);
                     if (pc != null) pc.Move(kv.Value);
                 }
@@ -272,6 +358,7 @@ namespace WandWarsMP.Sync
             byte num = r.U8();
             byte ability = r.U8();
             var look = new Vector2(r.I8() / 127f, r.I8() / 127f);
+            if (Predict && num == localNum && IsPredicted(ability)) return;
             var pc = EntityOf(num);
             if (pc == null) return;
             using (Replay.Begin())
@@ -299,11 +386,13 @@ namespace WandWarsMP.Sync
             for (int i = 0; i < n; i++)
             {
                 byte num = r.U8();
+                ushort inSeq = r.U16();
                 if (!r.Bool()) continue;
                 Vector2 pos = r.Vec2(), vel = r.Vec2();
                 var pc = EntityOf(num);
                 var rb = pc != null ? pc.Rigidbody2D : null;
                 if (rb == null || !pc.gameObject.activeInHierarchy) continue;
+                if (Predict && num == localNum) { Reconcile(rb, pos, inSeq); continue; }
                 Vector2 err = pos - rb.position;
                 float mag = err.magnitude;
                 AvgCorrection = AvgCorrection * 0.95f + mag * 0.05f;
@@ -312,6 +401,7 @@ namespace WandWarsMP.Sync
                 rb.velocity = vel;
             }
             ReadBallSnapshot(ref r);
+            ReadItemSnapshot(ref r);
         }
     }
 }

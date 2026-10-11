@@ -28,6 +28,15 @@ namespace WandWarsMP.Dev
                 .Where(p => p.Length == 2)
                 .ToDictionary(p => p[0].Trim(), p => p[1].Trim());
             Plugin.Trace("DevHarness active: " + string.Join(", ", h.cfg.Select(kv => kv.Key + "=" + kv.Value).ToArray()));
+            // netsim=latencyMs,jitterMs,lossPercent (one-way, applied to this instance's outgoing packets)
+            if (h.cfg.TryGetValue("netsim", out var sim))
+            {
+                var parts = sim.Split(',');
+                Net.UdpTransport.SimLatencyMs = float.Parse(parts[0]);
+                if (parts.Length > 1) Net.UdpTransport.SimJitterMs = float.Parse(parts[1]);
+                if (parts.Length > 2) Net.UdpTransport.SimLossPercent = float.Parse(parts[2]);
+            }
+            if (h.cfg.TryGetValue("predict", out var pred)) Sync.MatchSync.Predict = pred == "true";
         }
 
         private string Get(string key, string def) => cfg.TryGetValue(key, out var v) ? v : def;
@@ -213,7 +222,7 @@ namespace WandWarsMP.Dev
                 var sync = Sync.MatchSync.Instance;
                 string ents = string.Join(" ", Game.Match.Players.Select(p =>
                     (p.PrimaryEntity != null ? $"P{(int)p.PlayerNumber + 1}{(Vector2)p.PrimaryEntity.transform.position}" : $"P{(int)p.PlayerNumber + 1}-") + $"[{p.Score.Value}]").ToArray());
-                Plugin.Trace($"DevHarness: client round={Game.Match.RoundNumber} avgCorr={sync.AvgCorrection:F3} snaps={sync.Snaps} {ents}");
+                Plugin.Trace($"DevHarness: client round={Game.Match.RoundNumber} rtt={net.HostRttMs:F0} avgCorr={sync.AvgCorrection:F3} ownCorr={sync.OwnAvgCorrection:F3} align[-2..3]={string.Join("/", sync.AlignErr.Select(x => x.ToString("F2")).ToArray())} snaps={sync.Snaps} {ents}");
             }
             Plugin.Trace($"DevHarness: client done, status={net.Status} rtt={net.HostRttMs:F1}ms");
         }

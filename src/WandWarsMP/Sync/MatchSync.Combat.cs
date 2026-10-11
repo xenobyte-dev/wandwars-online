@@ -501,6 +501,9 @@ namespace WandWarsMP.Sync
                 case Msg.Hex: OnHex(ref r); break;
                 case Msg.RoundWinner: OnRoundWinner(ref r); break;
                 case Msg.PostMatch: ClientLeaveScoreScreen(); break;
+                case Msg.ItemSpawn: OnItemSpawn(ref r); break;
+                case Msg.ItemDespawn: OnItemDespawn(ref r); break;
+                case Msg.ItemPickup: OnItemPickup(ref r); break;
                 case Msg.RoundOver:
                     roundsOver.Add(r.U8());
                     break;

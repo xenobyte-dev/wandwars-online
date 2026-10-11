@@ -48,6 +48,9 @@ namespace WandWarsMP.Net
 
         private readonly NetWriter w = new NetWriter();
         private ushort inputSeq;
+
+        /// <summary>Client: fired every frame with the input just sent to the host (for local prediction).</summary>
+        public event Action<ushort, InputState> LocalInputSent;
         private float nextPing;
         private readonly Dictionary<int, float> rttMs = new Dictionary<int, float>();
 
@@ -159,9 +162,12 @@ namespace WandWarsMP.Net
             if (Role == NetRole.Client && LocalSlot >= 0)
             {
                 var m = Begin(Msg.Input);
-                m.U16(inputSeq++);
-                Capture.Sample().Write(m);
+                ushort seq = inputSeq++;
+                var input = Capture.Sample();
+                m.U16(seq);
+                input.Write(m);
                 SendTo(0, m, false);
+                LocalInputSent?.Invoke(seq, input);
             }
         }
 

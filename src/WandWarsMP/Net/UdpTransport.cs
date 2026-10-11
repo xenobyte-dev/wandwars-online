@@ -97,11 +97,50 @@ namespace WandWarsMP.Net
 
         // ---- sending ----
 
+        /// <summary>Dev-only network conditions applied to outgoing packets (one-way).</summary>
+        public static float SimLatencyMs, SimJitterMs, SimLossPercent;
+        private static readonly Random simRng = new Random();
+
+        private struct Delayed
+        {
+            public float Due;
+            public byte[] Data;
+            public EndPoint To;
+        }
+
+        private readonly List<Delayed> delayed = new List<Delayed>();
+
         private void Raw(Peer p, byte[] buf, int len)
         {
-            try { socket.SendTo(buf, 0, len, SocketFlags.None, p.EndPoint); }
-            catch (SocketException) { /* transient (buffer full etc.); reliability layer resends */ }
             p.LastSent = clock();
+            if (SimLatencyMs > 0 || SimLossPercent > 0)
+            {
+                if (simRng.NextDouble() * 100 < SimLossPercent) return;
+                var copy = new byte[len];
+                Buffer.BlockCopy(buf, 0, copy, 0, len);
+                float delay = (SimLatencyMs + (float)(simRng.NextDouble() * 2 - 1) * SimJitterMs) / 1000f;
+                delayed.Add(new Delayed { Due = clock() + Math.Max(0, delay), Data = copy, To = p.EndPoint });
+                return;
+            }
+            SendNow(buf, len, p.EndPoint);
+        }
+
+        private void SendNow(byte[] buf, int len, EndPoint to)
+        {
+            try { socket.SendTo(buf, 0, len, SocketFlags.None, to); }
+            catch (SocketException) { /* transient (buffer full etc.); reliability layer resends */ }
+        }
+
+        private void FlushDelayed()
+        {
+            if (delayed.Count == 0) return;
+            float now = clock();
+            for (int i = 0; i < delayed.Count; i++)
+            {
+                if (delayed[i].Due > now) continue;
+                SendNow(delayed[i].Data, delayed[i].Data.Length, delayed[i].To);
+                delayed.RemoveAt(i--);
+            }
         }
 
         private void SendConnect(Peer p)
@@ -164,6 +203,7 @@ namespace WandWarsMP.Net
                 if (n > 0) Handle((IPEndPoint)from, n);
             }
             Tick();
+            FlushDelayed();
         }
 
         private void Handle(IPEndPoint from, int n)
