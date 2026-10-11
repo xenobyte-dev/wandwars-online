@@ -191,6 +191,7 @@ namespace WandWarsMP.Sync
         {
             Plugin.Trace($"Sync: MatchStart received ({desc.Type} on '{desc.Level}', {desc.Players.Count} players)");
             pendingStart = desc;
+            ClientLeaveScoreScreen();
             roundSpawns.Clear();
             clientMoves.Clear();
             ResetCombat();

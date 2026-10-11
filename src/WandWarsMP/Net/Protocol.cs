@@ -21,7 +21,7 @@ namespace WandWarsMP.Net
         Snapshot = 24,      // (unreliable) u32 tick, players, balls
         BallSpawn = 25,     // u16 id, vec2 pos, vec2 vel, u8 owner, u8 normSpeed, f32 size
         BallDespawn = 26,   // u16 id
-        Damage = 27,        // u8 target, u8 amount, Source, u8 preHealth, bool died
+        Damage = 27,        // u8 target, u8 amount, Source, u8 preHealth, bool died, i16 postHealth
         Death = 28,         // u8 target, Source (death not caused by TakeDamage)
         Catch = 29,         // u8 player, u16 ball, vec2 ballOffset, vec2 rbCatchPos, vec2 preVel
         Launch = 30,        // u8 player, u16 ball, vec2 dir, u8 normSpeed
@@ -29,12 +29,17 @@ namespace WandWarsMP.Net
         Hex = 32,           // u8 target, f32 duration
         RoundWinner = 33,   // u8 round, u8 winner(255 none), u8 n, n x (u8 player, i32 score)
         RoundOver = 34,     // u8 round
+        PostMatch = 36,     // host left the score screen: everyone back to the lobby
+
+        // lobby
+        LobbyState = 40,    // H->C: characters, stages, settings, slots
+        LobbyPick = 41,     // C->H: u8 character (255 random), bool ready
     }
 
     public static class Protocol
     {
         /// <summary>Bump on any wire-format change. Peers with different values refuse each other.</summary>
-        public const ushort Version = 1;
+        public const ushort Version = 2;
         public const int DefaultPort = 27420;
     }
 }

@@ -18,6 +18,7 @@ namespace WandWarsMP.Sync
         private readonly Dictionary<Ball, ushort> ballIds = new Dictionary<Ball, ushort>();
         private readonly Dictionary<ushort, Ball> ballsById = new Dictionary<ushort, Ball>();
         private ushort nextBallId = 1;
+        private readonly NetWriter spawnWriter = new NetWriter();
         private readonly List<Ball> scratchBalls = new List<Ball>();
 
         // client: round winners received from host
@@ -60,7 +61,10 @@ namespace WandWarsMP.Sync
             ballIds[ball] = id;
             ballsById[id] = ball;
             var rb = ball.Rigidbody2D;
-            var w = net.Begin(Msg.BallSpawn);
+            // Own writer: this can run while another message is being built in the shared one.
+            var w = spawnWriter;
+            w.Reset();
+            w.U8((byte)Msg.BallSpawn);
             w.U16(id);
             w.Vec2(rb.position);
             w.Vec2(rb.velocity);
@@ -184,6 +188,7 @@ namespace WandWarsMP.Sync
         {
             byte num = OwnerNum(cs.Owner);
             if (num == NoPlayer) return;
+            HostBallId(info.Ball);
             var w = net.Begin(Msg.Catch);
             w.U8(num);
             w.U16(HostBallId(info.Ball));
@@ -196,6 +201,7 @@ namespace WandWarsMP.Sync
         {
             byte num = OwnerNum(cs.Owner);
             if (num == NoPlayer || info.Ball == null) return;
+            HostBallId(info.Ball);
             var w = net.Begin(Msg.Launch);
             w.U8(num);
             w.U16(HostBallId(info.Ball));
@@ -208,6 +214,7 @@ namespace WandWarsMP.Sync
         {
             byte num = OwnerNum(cs.Owner);
             if (num == NoPlayer) return;
+            foreach (var b in released) HostBallId(b);
             var w = net.Begin(Msg.Release);
             w.U8(num);
             w.Vec2(cs.Direction);
@@ -327,6 +334,7 @@ namespace WandWarsMP.Sync
 
         internal void HostOnDamage(GameEntity target, int amount, GameObject src, int preHealth, bool died)
         {
+            if (src != null && src.GetComponent<Ball>() != null) HostBallId(src.GetComponent<Ball>());
             byte num = PlayerNum(target);
             Plugin.Trace($"Sync[H]: damage P{num + 1} amt={amount} src={(src != null ? src.name : "null")} pre={preHealth} died={died}");
             if (num == NoPlayer) return;
@@ -336,6 +344,7 @@ namespace WandWarsMP.Sync
             WriteSource(w, src);
             w.U8((byte)Mathf.Clamp(preHealth, 0, 255));
             w.Bool(died);
+            w.I16((short)Mathf.Clamp(target.Health, -30000, 30000));
             net.Broadcast(w, true);
         }
 
@@ -344,6 +353,7 @@ namespace WandWarsMP.Sync
         internal void HostOnDeath(GameEntity target, GameObject src)
         {
             byte num = PlayerNum(target);
+            if (src != null && src.GetComponent<Ball>() != null) HostBallId(src.GetComponent<Ball>());
             Plugin.Trace($"Sync[H]: death P{num + 1} src={(killSource(src))}");
             if (num == NoPlayer) return;
             var w = net.Begin(Msg.Death);
@@ -360,11 +370,14 @@ namespace WandWarsMP.Sync
             var src = ReadSource(ref r, pc);
             int preHealth = r.U8();
             bool died = r.Bool();
+            int postHealth = r.I16();
             using (Replay.Begin())
             {
-                pc.Health = preHealth;
                 pc.SetImmunityTime(0f);
+                // Survived on the host (e.g. shield absorbed it): replay effects without a lethal outcome.
+                pc.Health = died ? preHealth : preHealth + amount + 1;
                 pc.TakeDamage(amount, src);
+                if (!died && pc != null) pc.Health = postHealth;
                 bool stillAlive = pc != null && pc.Player != null && pc.Player.Entities.Contains(pc);
                 Plugin.Trace($"Sync[C]: damage P{(int)pc.Player.PlayerNumber + 1} amt={amount} src={src.name} died={died} aliveAfterReplay={stillAlive}");
                 if (died && stillAlive) pc.Die(src);
@@ -433,6 +446,19 @@ namespace WandWarsMP.Sync
         }
 
         internal bool ClientRoundOver(int round) => roundsOver.Contains(round);
+        internal bool HasRoundWinner(int round) => roundWinners.ContainsKey(round);
+
+        internal void HostOnPostMatch()
+        {
+            net.Broadcast(net.Begin(Msg.PostMatch), true);
+        }
+
+        /// <summary>Client: leave the score screen if it's up (host moved on).</summary>
+        internal static void ClientLeaveScoreScreen()
+        {
+            var ss = Object.FindObjectOfType<ScoreScreen>();
+            if (ss != null && Game.Match != null && Game.Match.MatchState == MatchState.ScoreScreen) ss.Proceed();
+        }
 
         private void OnRoundWinner(ref NetReader r)
         {
@@ -474,6 +500,7 @@ namespace WandWarsMP.Sync
                 case Msg.Death: OnDeath(ref r); break;
                 case Msg.Hex: OnHex(ref r); break;
                 case Msg.RoundWinner: OnRoundWinner(ref r); break;
+                case Msg.PostMatch: ClientLeaveScoreScreen(); break;
                 case Msg.RoundOver:
                     roundsOver.Add(r.U8());
                     break;

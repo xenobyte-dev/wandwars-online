@@ -29,6 +29,7 @@ namespace WandWarsMP
             Plugin.Trace($"Game booted. Dev mode: {Dev.DevMode.Enabled}");
             Net.NetSession.Ensure();
             Sync.MatchSync.Ensure();
+            Sync.OnlineLobby.Ensure();
             Plugin.Root.AddComponent<UI.OnlinePanel>();
             try { Dev.DevHarness.TryStart(Plugin.Root); }
             catch (Exception e) { Plugin.Trace("DevHarness failed: " + e); }
