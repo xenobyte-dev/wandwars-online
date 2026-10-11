@@ -31,6 +31,8 @@ namespace WandWarsMP
             Sync.MatchSync.Ensure();
             Sync.OnlineLobby.Ensure();
             Sync.Disconnects.Ensure();
+            UI.NativeOnlineMenu.Ensure();
+            Sync.MenuSync.Ensure();
             Plugin.Root.AddComponent<UI.OnlinePanel>();
             try { Dev.DevHarness.TryStart(Plugin.Root); }
             catch (Exception e) { Plugin.Trace("DevHarness failed: " + e); }

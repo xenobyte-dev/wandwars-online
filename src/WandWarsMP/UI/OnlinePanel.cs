@@ -18,7 +18,6 @@ namespace WandWarsMP.UI
         private string port = Protocol.DefaultPort.ToString();
         private bool steamInitTried;
         private bool cursorWasVisible;
-        private bool wasInLobby;
         private Rect window = new Rect(20, 20, 380, 10);
 
         private void Update()
@@ -30,11 +29,7 @@ namespace WandWarsMP.UI
             }
             if (Input.GetKeyDown(ToggleKey)) SetOpen(!open);
 
-            // Auto-open when connected and back at the main menu; auto-close when a match starts.
-            var lobby = OnlineLobby.Instance;
-            bool inLobby = NetSession.Instance != null && NetSession.Instance.IsConnected && lobby != null && lobby.InMenu;
-            if (inLobby != wasInLobby) SetOpen(inLobby);
-            wasInLobby = inLobby;
+            // Advanced/debug panel only (direct IP, pings). The native "online" menu is the normal flow.
         }
 
         private void SetOpen(bool value)
@@ -53,12 +48,7 @@ namespace WandWarsMP.UI
         private void OnGUI()
         {
             var net = NetSession.Instance;
-            if (!open)
-            {
-                if (net != null && net.Role != NetRole.None)
-                    GUI.Label(new Rect(8, Screen.height - 24, 600, 22), $"Online: {net.Status}  {PingText(net)}   [F2]");
-                return;
-            }
+            if (!open) return;
             window = GUILayout.Window(0x5757, window, DrawWindow, $"Wand Wars Online {Plugin.Version}");
         }
 

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using InControl;
+using WandWars;
 using UnityEngine;
 
 namespace WandWarsMP.Net
@@ -295,6 +296,9 @@ namespace WandWarsMP.Net
             if (rp.HasInput && (short)(seq - rp.LastInputSeq) <= 0) return; // stale/reordered
             rp.LastInputSeq = seq;
             rp.HasInput = true;
+            // Online players don't get to drive the host's own main menu (they join at character select).
+            if (Game.GameStateMachine != null && Game.State is GameLobby && GameLobby.CurrentPanel is MainMenuPanel)
+                s = default(InputState);
             rp.Device.SetState(s);
         }
     }

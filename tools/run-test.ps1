@@ -14,6 +14,7 @@ if (-not $NoBuild) {
 Get-Process WandWars -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Milliseconds 500
 Set-Content "$GameDir\wwmp_autotest.txt" $Config
+$env:SteamAppId = "422110"   # run directly instead of relaunching through Steam
 try {
     Start-Process "$GameDir\WandWars.exe" -WorkingDirectory $GameDir | Out-Null
     # Steam may relaunch the exe under a new PID, so track by name rather than handle.

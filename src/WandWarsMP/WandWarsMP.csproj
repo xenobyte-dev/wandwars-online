@@ -26,6 +26,7 @@
     <Reference Include="BepInEx" HintPath="$(BepInExCore)\BepInEx.dll" Private="false" />
     <Reference Include="0Harmony" HintPath="$(BepInExCore)\0Harmony.dll" Private="false" />
     <Reference Include="UnityEngine" HintPath="$(ManagedDir)\UnityEngine.dll" Private="false" />
+    <Reference Include="UnityEngine.UI" HintPath="$(ManagedDir)\UnityEngine.UI.dll" Private="false" />
     <Reference Include="Assembly-CSharp" HintPath="$(ManagedDir)\Assembly-CSharp.dll" Private="false" />
     <Reference Include="Assembly-CSharp-firstpass" HintPath="$(ManagedDir)\Assembly-CSharp-firstpass.dll" Private="false" />
   </ItemGroup>

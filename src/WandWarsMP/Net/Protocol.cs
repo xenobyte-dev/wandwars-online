@@ -37,12 +37,13 @@ namespace WandWarsMP.Net
         // lobby
         LobbyState = 40,    // H->C: characters, stages, settings, slots
         LobbyPick = 41,     // C->H: u8 character (255 random), bool ready
+        MenuState = 42,     // H->C: panel, boxes, ready, mode, length, stage (native menu mirror)
     }
 
     public static class Protocol
     {
         /// <summary>Bump on any wire-format change. Peers with different values refuse each other.</summary>
-        public const ushort Version = 3;
+        public const ushort Version = 4;
         public const int DefaultPort = 27420;
     }
 }

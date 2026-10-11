@@ -18,11 +18,14 @@ namespace WandWarsMP.Dev
     {
         private Dictionary<string, string> cfg;
 
+        public static bool Active { get; private set; }
+
         public static void TryStart(GameObject host)
         {
             string path = Path.Combine(Paths.GameRootPath, "wwmp_autotest.txt");
             if (!File.Exists(path)) { Plugin.Trace("DevHarness: no " + path); return; }
             var h = host.AddComponent<DevHarness>();
+            Active = true;
             h.cfg = File.ReadAllLines(path)
                 .Select(l => l.Split(new[] { '=' }, 2))
                 .Where(p => p.Length == 2)
@@ -67,6 +70,18 @@ namespace WandWarsMP.Dev
                     break;
                 case "netclient":
                     yield return StartCoroutine(NetClientScenario());
+                    break;
+                case "nativehost":
+                    yield return StartCoroutine(NativeHostScenario());
+                    break;
+                case "nativeclient":
+                    yield return StartCoroutine(NativeClientScenario());
+                    break;
+                case "menushots":
+                    yield return StartCoroutine(MenuShots());
+                    break;
+                case "uidump":
+                    yield return StartCoroutine(UiDump());
                     break;
                 case "lobbyhost":
                     yield return StartCoroutine(LobbyHostScenario());
@@ -131,6 +146,160 @@ namespace WandWarsMP.Dev
                 Plugin.Trace($"DevHarness: host round={match.RoundNumber} rtt={Net.NetSession.Instance.GetRtt(remote.Peer):F1}ms {ents}");
             }
             Plugin.Trace($"DevHarness: RESULT remote max displacement {maxDist:F2}, hexes cast {p.HexesCast}");
+        }
+
+        /// <summary>Screenshot(s) + hierarchy dump of the lobby scene UI, for building native menus.</summary>
+        private IEnumerator UiDump()
+        {
+            yield return new WaitForSeconds(3f);
+            Shot("menu_main");
+            var sb = new StringBuilder();
+            foreach (var root in FindObjectsOfType<Canvas>().Select(c => c.rootCanvas).Distinct())
+                DumpTree(root.transform, 0, sb);
+            File.WriteAllText(Path.Combine(Paths.BepInExRootPath, "wwmp_ui.txt"), sb.ToString());
+            Plugin.Trace("DevHarness: ui dumped");
+            // Optional scripted navigation: nav=Panel1,Panel2 enters panels by name and screenshots each.
+            foreach (var name in Get("nav", "").Split(new[] { ',' }, System.StringSplitOptions.RemoveEmptyEntries))
+            {
+                var panel = Resources.FindObjectsOfTypeAll<Panel>().FirstOrDefault(p => p.name == name && p.gameObject.scene.IsValid());
+                if (panel == null) { Plugin.Trace("DevHarness: no panel " + name); continue; }
+                GameLobby.CurrentPanel.Exit();
+                panel.PreviousPanel = GameLobby.CurrentPanel;
+                panel.Enter();
+                yield return new WaitForSeconds(2.5f);
+                Shot("menu_" + name);
+            }
+            yield return new WaitForSeconds(1f);
+        }
+
+        private IEnumerator WaitMainMenu()
+        {
+            var mm = Resources.FindObjectsOfTypeAll<MainMenuPanel>().FirstOrDefault(x => x.gameObject.scene.IsValid());
+            float t = Time.realtimeSinceStartup + 15f;
+            while (GameLobby.CurrentPanel != mm && Time.realtimeSinceStartup < t)
+            {
+                // First run with keyboard only shows a controls screen that waits for a key press.
+                if (mm != null && mm.NavigationInstructions != null && mm.NavigationInstructions.gameObject.activeInHierarchy)
+                    mm.NavigationInstructions.gameObject.SetActive(false);
+                yield return null;
+            }
+            yield return new WaitForSeconds(1.5f);
+        }
+
+        /// <summary>Native flow: online menu -> host -> start -> real character/mode/stage select -> match.</summary>
+        private IEnumerator NativeHostScenario()
+        {
+            yield return StartCoroutine(WaitMainMenu());
+            var net = Net.NetSession.Ensure();
+            net.StartHost(int.Parse(Get("port", Net.Protocol.DefaultPort.ToString())));
+            float deadline = Time.realtimeSinceStartup + float.Parse(Get("seconds", "240"));
+            while (net.Remotes.Count == 0 && Time.realtimeSinceStartup < deadline) yield return null;
+            yield return new WaitForSeconds(2f);
+            Shot("h1_hosting");
+            yield return null;
+            UI.NativeOnlineMenu.Instance.StartVersus();
+            yield return new WaitForSeconds(float.Parse(Get("confirmdelay", "2")));
+            // Stand-in for the host pressing confirm on their own box.
+            var cs = GameLobby.CurrentPanel as CharacterSelection;
+            if (cs != null)
+            {
+                var boxes = HarmonyLib.Traverse.Create(cs).Field("boxes").GetValue<CharacterSelectionBox[]>();
+                boxes[0].SetState(CharacterSelectionBox.SelectionState.Confirmed);
+                Plugin.Trace("DevHarness: host confirmed own box; boxes=" + string.Join(",", boxes.Select(b => b.State + ":" + (b.Device != null ? b.Device.Name : "-")).ToArray()));
+            }
+            string last = null;
+            while (Time.realtimeSinceStartup < deadline)
+            {
+                string cur = Game.State is GameLobby ? (GameLobby.CurrentPanel != null ? GameLobby.CurrentPanel.name : "?") : StateName();
+                if (cur != last) { last = cur; Plugin.Trace("DevHarness: host at " + cur); Shot("h_" + cur); }
+                if (Game.State is MatchBase mb && mb.MatchState == MatchState.ScoreScreen) break;
+                yield return null;
+            }
+            while (!(Game.State is GameLobby) && Time.realtimeSinceStartup < deadline) yield return null;
+            Plugin.Trace("DevHarness: RESULT host back in lobby");
+            yield return new WaitForSeconds(3f);
+            Shot("h_after");
+            yield return new WaitForSeconds(1f);
+        }
+
+        private IEnumerator NativeClientScenario()
+        {
+            yield return StartCoroutine(WaitMainMenu());
+            var net = Net.NetSession.Ensure();
+            net.LocalName = "TestClient";
+            // Only taps A (no stick) so it walks the host's menus forward without changing picks.
+            net.Capture.Script = t => new Net.ScriptedInput { Buttons = (t % 1.2f) < 0.1f ? Net.InputState.A : 0 };
+            net.StartClient(Get("connect", "127.0.0.1"), int.Parse(Get("port", Net.Protocol.DefaultPort.ToString())));
+            float end = Time.realtimeSinceStartup + float.Parse(Get("seconds", "250"));
+            string last = null;
+            yield return new WaitForSeconds(1.5f);
+            Shot("c1_connected");
+            while (Time.realtimeSinceStartup < end && net.Role != Net.NetRole.None)
+            {
+                string cur = Game.State is GameLobby ? (GameLobby.CurrentPanel != null ? GameLobby.CurrentPanel.name : "?") : StateName();
+                if (cur != last)
+                {
+                    last = cur;
+                    Plugin.Trace("DevHarness: client at " + cur);
+                    StartCoroutine(DelayedShot("c_" + cur, 1.2f));
+                    StartCoroutine(DelayedShot("c_" + cur + "_b", 3.5f));
+                }
+                yield return null;
+            }
+            Plugin.Trace("DevHarness: client done " + net.Status);
+        }
+
+        private IEnumerator DelayedShot(string name, float delay)
+        {
+            yield return new WaitForSeconds(delay);
+            Shot(name);
+        }
+
+        private IEnumerator MenuShots()
+        {
+            yield return StartCoroutine(WaitMainMenu());
+            var mm = Resources.FindObjectsOfTypeAll<MainMenuPanel>().FirstOrDefault(x => x.gameObject.scene.IsValid());
+            var online = mm.MainMenuCarousel.Buttons.FirstOrDefault(b => b.name == "wwmp_online");
+            if (online == null) { Plugin.Trace("DevHarness: no online button"); yield break; }
+            mm.MainMenuCarousel.SetItem(online);
+            yield return new WaitForSeconds(1f);
+            Shot("1_main_online");
+            yield return null;
+            yield return null;
+            online.Select();
+            yield return new WaitForSeconds(1f);
+            Shot("2_submenu");
+            yield return null;
+            yield return null;
+            Net.NetSession.Ensure().StartHost(Net.Protocol.DefaultPort);
+            yield return new WaitForSeconds(1.5f);
+            Shot("3_hosting");
+            yield return null;
+            yield return null;
+            UI.NativeOnlineMenu.Instance.StartVersus();
+            yield return new WaitForSeconds(2.5f);
+            Shot("4_charselect");
+        }
+
+        internal static void Shot(string name)
+        {
+            string path = Path.Combine(Paths.BepInExRootPath, "shots");
+            Directory.CreateDirectory(path);
+            Application.CaptureScreenshot(Path.Combine(path, name + ".png"));
+            Plugin.Trace("DevHarness: screenshot " + name);
+        }
+
+        private static void DumpTree(Transform t, int depth, StringBuilder sb)
+        {
+            var comps = t.GetComponents<Component>().Where(c => c != null && !(c is Transform))
+                .Select(c => c.GetType().Name).ToArray();
+            var text = t.GetComponent<UnityEngine.UI.Text>();
+            sb.Append(new string(' ', depth * 2)).Append(t.gameObject.activeSelf ? "" : "(off) ").Append(t.name)
+              .Append("  [").Append(string.Join(",", comps)).Append("]");
+            if (text != null) sb.Append("  \"").Append(text.text.Replace('\n', ' ')).Append("\"");
+            if (t is RectTransform rt) sb.Append($"  pos={rt.anchoredPosition} size={rt.sizeDelta}");
+            sb.AppendLine();
+            if (depth < 9) foreach (Transform c in t) DumpTree(c, depth + 1, sb);
         }
 
         private static string StateName() => Game.State == null ? "null" : Game.State.GetType().Name;

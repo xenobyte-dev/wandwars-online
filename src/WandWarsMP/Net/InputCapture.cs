@@ -51,6 +51,8 @@ namespace WandWarsMP.Net
                     if (acts[i].WasPressed) Bump(i);
                 }
                 if (device.MenuIsPressed) buttons |= InputState.Menu;
+                // Escape is the keyboard "back" in menus; mirrored menus live on the host, so forward it as B.
+                if (Sync.MenuSync.ClientMirroring && Input.GetKey(KeyCode.Escape)) buttons |= InputState.B;
                 move = actions.Move.Vector;
             }
 
