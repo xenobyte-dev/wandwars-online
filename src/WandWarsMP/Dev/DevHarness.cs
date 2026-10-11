@@ -82,7 +82,8 @@ namespace WandWarsMP.Dev
                 players.Add(new Player(chars[i % chars.Count], (PlayerNumber)i, human ? humans[i] : null, null, isBot: !human));
             }
             Plugin.Trace($"DevHarness: starting Deathmatch on {stage}, {total} players ({humans?.Count ?? 0} human)");
-            Game.GameStateMachine.Start(new Deathmatch(stage, players, new MatchConfig { MatchType = MatchType.Deathmatch }));
+            // Same path as the real menu flow, so sync hooks (CreateMatch postfix) fire.
+            Game.GameStateMachine.Start(GameLobby.CreateMatch(stage, players, new MatchConfig { MatchType = MatchType.Deathmatch }));
             while (!(Game.State is MatchBase)) yield return null;
         }
 
@@ -95,7 +96,7 @@ namespace WandWarsMP.Dev
             if (net.Remotes.Count == 0) { Plugin.Trace("DevHarness: no client joined"); yield break; }
 
             var remote = net.Remotes.Values.First();
-            yield return StartCoroutine(StartBotMatch(2, new List<InControl.InputDevice> { remote.Device }));
+            yield return StartCoroutine(StartBotMatch(int.Parse(Get("players", "2")), new List<InControl.InputDevice> { remote.Device }));
             var match = (MatchBase)Game.State;
             Player p = match.Players.First(x => x.InputDevice == remote.Device);
 
@@ -110,7 +111,9 @@ namespace WandWarsMP.Dev
                 Vector3 pos = p.PrimaryEntity.transform.position;
                 if (!haveStart) { start = pos; haveStart = true; }
                 maxDist = Mathf.Max(maxDist, Vector3.Distance(start, pos));
-                Plugin.Trace($"DevHarness: remote pos={pos} rtt={Net.NetSession.Instance.GetRtt(remote.Peer):F1}ms hexes={p.HexesCast}");
+                string ents = string.Join(" ", match.Players.Select(x =>
+                    x.PrimaryEntity != null ? $"P{(int)x.PlayerNumber + 1}{(Vector2)x.PrimaryEntity.transform.position}" : $"P{(int)x.PlayerNumber + 1}-").ToArray());
+                Plugin.Trace($"DevHarness: host round={match.RoundNumber} rtt={Net.NetSession.Instance.GetRtt(remote.Peer):F1}ms {ents}");
             }
             Plugin.Trace($"DevHarness: RESULT remote max displacement {maxDist:F2}, hexes cast {p.HexesCast}");
         }
@@ -127,7 +130,17 @@ namespace WandWarsMP.Dev
             };
             net.StartClient(Get("connect", "127.0.0.1"), int.Parse(Get("port", Net.Protocol.DefaultPort.ToString())));
             float end = Time.realtimeSinceStartup + float.Parse(Get("seconds", "30"));
-            while (Time.realtimeSinceStartup < end) yield return null;
+            float nextLog = 0;
+            while (Time.realtimeSinceStartup < end)
+            {
+                yield return null;
+                if (Time.realtimeSinceStartup < nextLog || Game.Match == null) continue;
+                nextLog = Time.realtimeSinceStartup + 1f;
+                var sync = Sync.MatchSync.Instance;
+                string ents = string.Join(" ", Game.Match.Players.Select(p =>
+                    p.PrimaryEntity != null ? $"P{(int)p.PlayerNumber + 1}{(Vector2)p.PrimaryEntity.transform.position}" : $"P{(int)p.PlayerNumber + 1}-").ToArray());
+                Plugin.Trace($"DevHarness: client round={Game.Match.RoundNumber} avgCorr={sync.AvgCorrection:F3} snaps={sync.Snaps} {ents}");
+            }
             Plugin.Trace($"DevHarness: client done, status={net.Status} rtt={net.HostRttMs:F1}ms");
         }
 
