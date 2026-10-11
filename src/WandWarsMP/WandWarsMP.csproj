@@ -11,6 +11,8 @@
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
     <!-- Override per machine: dotnet build -p:GameDir="..." -->
     <GameDir Condition="'$(GameDir)' == ''">E:\Program Files (x86)\Steam\steamapps\common\Wand Wars</GameDir>
+    <!-- Second game copy for running two instances on one PC (dev only). -->
+    <ClientDir Condition="'$(ClientDir)' == ''">C:\dev\wandwars-client</ClientDir>
     <ManagedDir>$(GameDir)\WandWars_Data\Managed</ManagedDir>
     <BepInExCore>$(GameDir)\BepInEx\core</BepInExCore>
   </PropertyGroup>
@@ -31,6 +33,11 @@
   <Target Name="DeployToGame" AfterTargets="Build" Condition="Exists('$(GameDir)\BepInEx')">
     <MakeDir Directories="$(GameDir)\BepInEx\plugins\WandWarsMP" />
     <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(GameDir)\BepInEx\plugins\WandWarsMP" />
+  </Target>
+
+  <Target Name="DeployToClientCopy" AfterTargets="Build" Condition="Exists('$(ClientDir)\BepInEx')">
+    <MakeDir Directories="$(ClientDir)\BepInEx\plugins\WandWarsMP" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(ClientDir)\BepInEx\plugins\WandWarsMP" />
   </Target>
 
 </Project>

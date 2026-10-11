@@ -6,3 +6,4 @@ obj/
 dist/
 *.user
 .vs/
+tools/.venv/
