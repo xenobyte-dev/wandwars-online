@@ -27,24 +27,25 @@ namespace WandWarsMP.Net
         Launch = 30,        // u8 player, u16 ball, vec2 dir, u8 normSpeed
         Release = 31,       // u8 player, vec2 dir, u8 n, n x (u16 ball, u8 normSpeed)
         Hex = 32,           // u8 target, f32 duration
-        RoundWinner = 33,   // u8 round, u8 winner(255 none), u8 n, n x (u8 player, i32 score)
+        RoundWinner = 33,   // u8 round, u8 kind, u8 winner, players (u8 num, i32 score), teams (u8 idx, i32 score)
         RoundOver = 34,     // u8 round
         ItemSpawn = 37,     // u16 id, str powerupName, vec2 pos
         ItemDespawn = 38,   // u16 id
         ItemPickup = 39,    // u8 player, u16 item
+        Goal = 35,          // u8 targetTeam, u16 ball, vec2 pos, vec2 dir, u8 owner
         MatchAbort = 43,    // host ended the match early: everyone back to the menu
         PostMatch = 36,     // host left the score screen: everyone back to the lobby
 
         // lobby
         LobbyState = 40,    // H->C: characters, stages, settings, slots
         LobbyPick = 41,     // C->H: u8 character (255 random), bool ready
-        MenuState = 42,     // H->C: panel, boxes, ready, mode, length, stage (native menu mirror)
+        MenuState = 42,     // H->C: panel, boxes, ready, mode, length, stage, players (native menu mirror)
     }
 
     public static class Protocol
     {
         /// <summary>Bump on any wire-format change. Peers with different values refuse each other.</summary>
-        public const ushort Version = 5;
+        public const ushort Version = 6;
         public const int DefaultPort = 27420;
     }
 }

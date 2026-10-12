@@ -28,10 +28,14 @@ namespace WandWarsMP.Sync
         private readonly HashSet<int> roundsAwaitingScore = new HashSet<int>(); // client: used local winner
         private int hostRoundOverSent = -1;
 
+        public const byte WinNone = 0, WinPlayer = 1, WinTeam = 2;
+
         public sealed class RoundWinnerData
         {
+            public byte WinnerKind;
             public byte Winner;
             public Dictionary<byte, int> Scores = new Dictionary<byte, int>();
+            public Dictionary<byte, int> TeamScores = new Dictionary<byte, int>();
         }
 
         /// <summary>True while the client is creating a ball the host told it about.</summary>
@@ -439,15 +443,34 @@ namespace WandWarsMP.Sync
         {
             var w = net.Begin(Msg.RoundWinner);
             w.U8((byte)match.RoundNumber);
-            var wp = winner as Player;
-            w.U8(wp == null ? NoPlayer : (byte)wp.PlayerNumber);
+            if (winner is Player wp) { w.U8(WinPlayer); w.U8((byte)wp.PlayerNumber); }
+            else if (winner is Team wt) { w.U8(WinTeam); w.U8((byte)wt.Index); }
+            else { w.U8(WinNone); w.U8(0); }
             w.U8((byte)match.Players.Count);
             foreach (var p in match.Players)
             {
                 w.U8((byte)p.PlayerNumber);
                 w.I32(p.Score.Value);
             }
+            var teams = match.Teams;
+            w.U8((byte)teams.Count);
+            for (int i = 0; i < teams.Count; i++)
+            {
+                w.U8((byte)i);
+                w.I32(teams[i].Score.Value);
+            }
             net.Broadcast(w, true);
+            string who = winner is Player p2 ? "P" + ((int)p2.PlayerNumber + 1) : winner is Team t2 ? "team " + t2.Index : "none";
+            Plugin.Trace($"Sync[H]: round {match.RoundNumber} winner {who}");
+        }
+
+        internal static IScoreProvider ResolveWinner(RoundWinnerData d)
+        {
+            var m = Game.Match;
+            if (m == null) return null;
+            if (d.WinnerKind == WinPlayer) return m.Players.Find(p => (byte)p.PlayerNumber == d.Winner);
+            if (d.WinnerKind == WinTeam && d.Winner < m.Teams.Count) return m.Teams[d.Winner];
+            return null;
         }
 
         internal void HostOnRoundOver(MatchBase match)
@@ -484,10 +507,13 @@ namespace WandWarsMP.Sync
         private void OnRoundWinner(ref NetReader r)
         {
             int round = r.U8();
-            var d = new RoundWinnerData { Winner = r.U8() };
+            var d = new RoundWinnerData { WinnerKind = r.U8(), Winner = r.U8() };
             int n = r.U8();
             for (int i = 0; i < n; i++) d.Scores[r.U8()] = r.I32();
-            Plugin.Trace($"Sync[C]: round {round} winner P{d.Winner + 1}");
+            int nt = r.U8();
+            for (int i = 0; i < nt; i++) d.TeamScores[r.U8()] = r.I32();
+            string who = d.WinnerKind == WinPlayer ? "P" + (d.Winner + 1) : d.WinnerKind == WinTeam ? "team " + d.Winner : "none";
+            Plugin.Trace($"Sync[C]: round {round} winner {who}");
             if (roundsAwaitingScore.Remove(round)) ApplyScores(d); // we already used a local guess
             else roundWinners[round] = d;
         }
@@ -497,6 +523,50 @@ namespace WandWarsMP.Sync
             if (Game.Match == null) return;
             foreach (var p in Game.Match.Players)
                 if (d.Scores.TryGetValue((byte)p.PlayerNumber, out int s) && p.Score.Value != s) p.Score.Value = s;
+            var teams = Game.Match.Teams;
+            for (int i = 0; i < teams.Count; i++)
+                if (d.TeamScores.TryGetValue((byte)i, out int ts) && teams[i].Score.Value != ts) teams[i].Score.Value = ts;
+        }
+
+        // ================= Merlinball =================
+
+        internal void HostOnGoal(MerlinBallTarget target, Ball ball)
+        {
+            ushort id = HostBallId(ball);
+            var w = net.Begin(Msg.Goal);
+            w.U8((byte)target.TeamIndex);
+            w.U16(id);
+            w.Vec2(ball.Rigidbody2D.position);
+            w.Vec2(ball.Direction);
+            w.U8(OwnerNum(ball.Owner));
+            net.Broadcast(w, true);
+            Plugin.Trace($"Sync[H]: goal in target {target.TeamIndex} by P{OwnerNum(ball.Owner) + 1}");
+        }
+
+        private void OnGoal(ref NetReader r)
+        {
+            int teamIndex = r.U8();
+            var ball = BallById(r.U16());
+            Vector2 pos = r.Vec2(), dir = r.Vec2();
+            byte owner = r.U8();
+            MerlinBallTarget target = Level.MerlinBallTargets.Find(t => t != null && t.TeamIndex == teamIndex);
+            if (target == null) { Plugin.Trace("Sync[C]: goal for unknown target " + teamIndex); return; }
+            if (ball == null || !ball.isActiveAndEnabled)
+            {
+                // Our copy is gone already; a stand-in lets the goal play out natively.
+                SpawningNetBall = true;
+                try { ball = Staple.Scene.InstantiateInScene<Ball>(Game.GlobalResources.BallPrefab, pos, Quaternion.identity); }
+                finally { SpawningNetBall = false; }
+            }
+            ball.transform.position = pos;
+            ball.Rigidbody2D.position = pos;
+            ball.Direction = dir;
+            if (ball.State != Ball.BallState.Normal) ball.SetState(Ball.BallState.Normal);
+            var pc = owner == NoPlayer ? null : EntityOf(owner);
+            ball.Owner = pc != null ? pc.SpellOwner : null;
+            Plugin.Trace($"Sync[C]: goal in target {teamIndex} by P{owner + 1}");
+            using (Replay.Begin())
+                Traverse.Create(target).Method("OnTriggerEnter2D", ball.CircleCollider2D).GetValue();
         }
 
         /// <summary>Client: host's result for this round, or null (caller then uses the local result and
@@ -522,6 +592,7 @@ namespace WandWarsMP.Sync
                 case Msg.Hex: OnHex(ref r); break;
                 case Msg.RoundWinner: OnRoundWinner(ref r); break;
                 case Msg.PostMatch: ClientLeaveScoreScreen(); break;
+                case Msg.Goal: OnGoal(ref r); break;
                 case Msg.MatchAbort:
                     Plugin.Trace("Sync[C]: host ended the match");
                     if (Game.Match != null) Game.Match.QuitToMainMenu();

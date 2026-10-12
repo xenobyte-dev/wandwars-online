@@ -115,9 +115,17 @@ namespace WandWarsMP.Dev
                 bool human = humans != null && i < humans.Count;
                 players.Add(new Player(chars[i % chars.Count], (PlayerNumber)i, human ? humans[i] : null, null, isBot: !human));
             }
-            Plugin.Trace($"DevHarness: starting Deathmatch on {stage}, {total} players ({humans?.Count ?? 0} human)");
+            var type = MatchType.Deathmatch;
+            switch (Get("matchtype", "deathmatch"))
+            {
+                case "merlinball": type = MatchType.Merlinball; break;
+                case "teamdeathmatch": type = MatchType.TeamDeathmatch; break;
+            }
+            if (type.IsTeam())
+                for (int i = 0; i < players.Count; i++) players[i].Team = Game.GlobalResources.Teams[i % 2];
+            Plugin.Trace($"DevHarness: starting {type} on {stage}, {total} players ({humans?.Count ?? 0} human)");
             // Same path as the real menu flow, so sync hooks (CreateMatch postfix) fire.
-            Game.GameStateMachine.Start(GameLobby.CreateMatch(stage, players, new MatchConfig { MatchType = MatchType.Deathmatch }));
+            Game.GameStateMachine.Start(GameLobby.CreateMatch(stage, players, new MatchConfig { MatchType = type }));
             while (!(Game.State is MatchBase)) yield return null;
         }
 

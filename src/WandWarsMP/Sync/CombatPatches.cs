@@ -180,14 +180,34 @@ namespace WandWarsMP.Sync
         private static bool Prefix() => !Authority.BlockLocal;
     }
 
-    // ================= rounds =================
+    // ================= rounds (every mode) =================
 
-    [HarmonyPatch(typeof(Deathmatch), "FindRoundWinner")]
-    internal static class DeathmatchWinnerPatch
+    internal static class RoundMethods
     {
-        private static bool Prefix(Deathmatch __instance, ref IScoreProvider __result)
+        /// <summary>The base method plus every mode's override of it, so all modes are covered.</summary>
+        public static IEnumerable<System.Reflection.MethodBase> All(string name)
         {
-            if (!MatchSync.IsClient) return true;
+            foreach (var t in typeof(MatchBase).Assembly.GetTypes())
+            {
+                if (!typeof(MatchBase).IsAssignableFrom(t)) continue;
+                var m = AccessTools.DeclaredMethod(t, name);
+                if (m != null && !m.IsAbstract) yield return m;
+            }
+        }
+
+        /// <summary>Overrides may call base: only the outermost call talks to the network.</summary>
+        public static int WinnerDepth;
+    }
+
+    [HarmonyPatch]
+    internal static class FindRoundWinnerPatch
+    {
+        private static IEnumerable<System.Reflection.MethodBase> TargetMethods() => RoundMethods.All("FindRoundWinner");
+
+        private static bool Prefix(MatchBase __instance, ref IScoreProvider __result, out bool __state)
+        {
+            __state = RoundMethods.WinnerDepth++ == 0;
+            if (!MatchSync.IsClient || !__state) return true;
             var d = MatchSync.Instance.TakeRoundWinner(__instance.RoundNumber);
             if (d == null)
             {
@@ -195,38 +215,83 @@ namespace WandWarsMP.Sync
                 return true;
             }
             MatchSync.ApplyScores(d);
-            Player winner = null;
-            foreach (var p in __instance.Players)
-                if ((byte)p.PlayerNumber == d.Winner) winner = p;
-            __result = winner;
+            __result = MatchSync.ResolveWinner(d);
             return false;
         }
 
-        private static void Postfix(Deathmatch __instance, IScoreProvider __result)
+        private static void Postfix(MatchBase __instance, IScoreProvider __result, bool __state)
         {
-            if (MatchSync.IsHost) MatchSync.Instance.HostOnRoundWinner(__instance, __result);
+            RoundMethods.WinnerDepth--;
+            if (__state && MatchSync.IsHost) MatchSync.Instance.HostOnRoundWinner(__instance, __result);
         }
     }
 
     /// <summary>Host's fast-forward (all humans dead, skip pressed) ends the round too.</summary>
-    [HarmonyPatch(typeof(Deathmatch), "FindFastForwardRoundWinner")]
-    internal static class DeathmatchFastForwardPatch
+    [HarmonyPatch]
+    internal static class FastForwardWinnerPatch
     {
-        private static void Postfix(Deathmatch __instance, IScoreProvider __result)
+        private static IEnumerable<System.Reflection.MethodBase> TargetMethods() => RoundMethods.All("FindFastForwardRoundWinner");
+
+        private static void Prefix(out bool __state) => __state = RoundMethods.WinnerDepth++ == 0;
+
+        private static void Postfix(MatchBase __instance, IScoreProvider __result, bool __state)
         {
-            if (!MatchSync.IsHost) return;
+            RoundMethods.WinnerDepth--;
+            if (!__state || !MatchSync.IsHost) return;
             MatchSync.Instance.HostOnRoundOver(__instance);
             MatchSync.Instance.HostOnRoundWinner(__instance, __result);
         }
     }
 
-    [HarmonyPatch(typeof(Deathmatch), "EndRoundCondition")]
-    internal static class DeathmatchEndRoundPatch
+    [HarmonyPatch]
+    internal static class EndRoundConditionPatch
     {
-        private static void Postfix(Deathmatch __instance, ref bool __result)
+        private static IEnumerable<System.Reflection.MethodBase> TargetMethods() => RoundMethods.All("EndRoundCondition");
+
+        private static void Postfix(MatchBase __instance, ref bool __result)
         {
             if (MatchSync.IsHost && __result) MatchSync.Instance.HostOnRoundOver(__instance);
             else if (MatchSync.IsClient && !__result) __result = MatchSync.Instance.ClientRoundOver(__instance.RoundNumber);
+        }
+    }
+
+    // ================= Merlinball goals =================
+
+    /// <summary>Goals are decided on the host; clients replay the target's own trigger (visuals + scoring).</summary>
+    [HarmonyPatch(typeof(MerlinBallTarget), "OnTriggerEnter2D")]
+    internal static class MerlinGoalPatch
+    {
+        /// <summary>Host: the ball/target being processed, so OnBallInTarget knows what scored.</summary>
+        internal static Ball PendingBall;
+        internal static MerlinBallTarget PendingTarget;
+
+        private static bool Prefix(MerlinBallTarget __instance, Collider2D col)
+        {
+            if (Authority.BlockLocal) return false;
+            if (Authority.HostSending && col != null)
+            {
+                PendingBall = col.GetComponent<Ball>();
+                PendingTarget = __instance;
+            }
+            return true;
+        }
+
+        private static void Postfix()
+        {
+            PendingBall = null;
+            PendingTarget = null;
+        }
+    }
+
+    /// <summary>Host: the mode accepted a goal (fires from inside the target trigger).</summary>
+    [HarmonyPatch(typeof(MerlinBall), "OnBallInTarget")]
+    internal static class MerlinBallInTargetPatch
+    {
+        private static void Prefix()
+        {
+            var ball = MerlinGoalPatch.PendingBall;
+            if (Authority.HostSending && ball != null && MerlinGoalPatch.PendingTarget != null)
+                MatchSync.Instance.HostOnGoal(MerlinGoalPatch.PendingTarget, ball);
         }
     }
 

@@ -42,12 +42,21 @@ namespace WandWarsMP.Sync
             public sbyte Difficulty;
         }
 
+        private sealed class PlayerData
+        {
+            public string Character;
+            public bool IsBot;
+            public int Difficulty;
+            public int Team;
+        }
+
         private sealed class MenuStateData
         {
             public string Panel;
             public List<BoxData> Boxes = new List<BoxData>();
             public bool ReadyButton;
             public string Mode, Length, Stage;
+            public List<PlayerData> Players = new List<PlayerData>();
         }
 
         public static void Ensure()
@@ -121,6 +130,18 @@ namespace WandWarsMP.Sync
                 if (stages != null && i < stages.Length) stage = stages[i].SceneName;
             }
             w.Str(stage);
+
+            var players = GameLobby.Players;
+            var teams = Game.GlobalResources.Teams;
+            w.U8((byte)(players?.Count ?? 0));
+            if (players != null)
+                foreach (var p in players)
+                {
+                    w.Str(p.Character != null ? p.Character.ShortName : "");
+                    w.Bool(p.IsBot);
+                    w.U8((byte)Mathf.Clamp(p.BotDifficulty, 0, 255));
+                    w.I8((sbyte)(p.Team != null ? teams.IndexOf(p.Team) : -1));
+                }
         }
 
         private static string CarouselText(RectTransformCarousel c)
@@ -175,6 +196,9 @@ namespace WandWarsMP.Sync
             s.Mode = r.Str();
             s.Length = r.Str();
             s.Stage = r.Str();
+            int np = r.U8();
+            for (int i = 0; i < np; i++)
+                s.Players.Add(new PlayerData { Character = r.Str(), IsBot = r.Bool(), Difficulty = r.U8(), Team = r.I8() });
             pending = s;
         }
 
@@ -203,6 +227,7 @@ namespace WandWarsMP.Sync
                 if (panel == null) return;
                 // Only follow the host out of the main menu once the client is at the menu itself.
                 if (current is MainMenuPanel) UI.NativeOnlineMenu.Instance?.ExitSubmenu();
+                if (panel is TeamPanel) GameLobby.Players = BuildPlayers(s.Players);
                 Plugin.Trace($"MenuSync: {current.name} -> {target}");
                 appliedPanel = target;
                 current.Exit();
@@ -219,6 +244,31 @@ namespace WandWarsMP.Sync
                 SetCarouselByText(ms.MatchLengthCarousel, s.Length);
             }
             if (current is StageSelectPanel ss) ApplyStage(ss, s.Stage);
+            if (current is TeamPanel tp) ApplyTeams(tp, s.Players);
+        }
+
+        private static List<Player> BuildPlayers(List<PlayerData> data)
+        {
+            var list = new List<Player>();
+            for (int i = 0; i < data.Count; i++)
+            {
+                Character c;
+                Game.GlobalResources.Characters.TryGetValue(data[i].Character, out c);
+                var p = new Player(c, (PlayerNumber)i, new NetInputDevice("puppet"), null, data[i].IsBot)
+                {
+                    BotDifficulty = data[i].Difficulty,
+                };
+                list.Add(p);
+            }
+            return list;
+        }
+
+        private static void ApplyTeams(TeamPanel tp, List<PlayerData> data)
+        {
+            var boxes = Traverse.Create(tp).Field("boxes").GetValue<List<TeamSelectionBox>>();
+            if (boxes == null) return;
+            for (int i = 0; i < boxes.Count && i < data.Count; i++)
+                if (data[i].Team >= 0 && boxes[i].TeamIndex != data[i].Team) boxes[i].SetTeam(data[i].Team);
         }
 
         private static void SetCarouselByText(RectTransformCarousel c, string text)
@@ -353,7 +403,7 @@ namespace WandWarsMP.Sync
     [HarmonyLib.HarmonyPatch(typeof(WandWars.ModeSelectPanel), nameof(WandWars.ModeSelectPanel.Enter))]
     internal static class OnlineModesPatch
     {
-        public static readonly string[] Supported = { "arcane arena" };
+        public static readonly string[] Supported = { "arcane arena", "team arena", "merlinball" };
 
         private static void Postfix(WandWars.ModeSelectPanel __instance)
         {
