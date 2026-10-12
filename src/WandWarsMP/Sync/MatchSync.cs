@@ -81,6 +81,7 @@ namespace WandWarsMP.Sync
             hostMoves.Clear();
             ResetCombat();
             ResetItems();
+            ResetStats();
             ApplyHostInputDelay(players);
             Plugin.Trace($"Sync: MatchStart sent ({config.MatchType} on '{level}', {players.Count} players, seed {seed})");
         }
@@ -331,6 +332,7 @@ namespace WandWarsMP.Sync
             clientMoves.Clear();
             ResetCombat();
             ResetItems();
+            ResetStats();
             haveFrame = haveSnapshot = false;
             Snaps = 0;
             AvgCorrection = 0;

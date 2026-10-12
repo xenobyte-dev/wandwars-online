@@ -623,6 +623,7 @@ namespace WandWarsMP.Sync
                 case Msg.PostMatch: ClientLeaveScoreScreen(); break;
                 case Msg.Goal: OnGoal(ref r); break;
                 case Msg.ShotDead: OnShotDead(ref r); break;
+                case Msg.MatchStats: OnMatchStats(ref r); break;
                 case Msg.MatchAbort:
                     Plugin.Trace("Sync[C]: host ended the match");
                     if (Game.Match != null) Game.Match.QuitToMainMenu();
