@@ -74,6 +74,7 @@ namespace WandWarsMP.Sync
         {
             int seed = System.Environment.TickCount;
             Random.seed = seed;
+            CurrentSeed = seed;
             var desc = MatchDesc.FromMatch(level, players, config, OwnerOf, seed);
             var w = net.Begin(Msg.MatchStart);
             desc.Write(w);
@@ -242,6 +243,7 @@ namespace WandWarsMP.Sync
             WriteBallSnapshot(w);
             WriteItemSnapshot(w);
             WriteEntitySnapshot(w);
+            WriteEggSnapshot(w);
             var timer = Object.FindObjectOfType<LevelTimer>();
             w.Bool(timer != null);
             if (timer != null) w.F32(timer.RemainingTime);
@@ -370,6 +372,7 @@ namespace WandWarsMP.Sync
                 var desc = pendingStart;
                 pendingStart = null;
                 Random.seed = desc.Seed;
+                CurrentSeed = desc.Seed;
                 var players = desc.BuildPlayers(_ => new NetInputDevice("puppet"));
                 var match = GameLobby.CreateMatch(desc.Level, players, desc.ToConfig());
                 Game.GameStateMachine.Start(match);
@@ -486,6 +489,7 @@ namespace WandWarsMP.Sync
             ReadBallSnapshot(ref r);
             ReadItemSnapshot(ref r);
             ReadEntitySnapshot(ref r);
+            ReadEggSnapshot(ref r);
             if (r.Bool())
             {
                 float remaining = r.F32();
