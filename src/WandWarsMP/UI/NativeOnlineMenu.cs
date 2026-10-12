@@ -170,7 +170,7 @@ namespace WandWarsMP.UI
                 bool steam = Net.SteamLobby.Instance != null;
                 Add("host", "host game", steam ? "via steam" : "udp port " + Protocol.DefaultPort, HostGame);
                 Add("join", "join game", steam ? "steam friends" : "no steam", JoinGame);
-                Add("back", "back", ShortStatus(net), ExitSubmenu);
+                Add("back", "back", OfflineNote(), ExitSubmenu);
             }
             else if (net.Role == NetRole.Host)
             {
@@ -194,6 +194,16 @@ namespace WandWarsMP.UI
                 int idx = selectedKey != null ? keys.IndexOf(selectedKey) : -1;
                 SetCarousel(list, idx >= 0 ? list[idx] : list[0]);
             }
+        }
+
+        private static string OfflineNote()
+        {
+            string r = Sync.Disconnects.LastDisconnectReason;
+            if (string.IsNullOrEmpty(r)) return "";
+            if (r.Contains("version")) return "mod versions differ";
+            if (r.Contains("timeout")) return "connection lost";
+            if (r.Contains("disconnect")) return "host left";
+            return "disconnected";
         }
 
         private static string ShortStatus(NetSession net)
@@ -225,6 +235,7 @@ namespace WandWarsMP.UI
 
         private static void HostGame()
         {
+            Sync.Disconnects.LastDisconnectReason = null;
             if (Net.SteamLobby.Instance != null) Net.SteamLobby.Instance.Host();
             else NetSession.Ensure().StartHost(Protocol.DefaultPort);
         }

@@ -12,6 +12,9 @@ namespace WandWarsMP.Sync
     public sealed class Disconnects : MonoBehaviour
     {
         private NetSession net;
+
+        /// <summary>Shown in the online menu after an involuntary disconnect.</summary>
+        public static string LastDisconnectReason;
         private bool wasConnectedClient;
 
         public static void Ensure()
@@ -49,10 +52,22 @@ namespace WandWarsMP.Sync
         {
             if (net == null) return;
             bool connectedClient = net.Role == NetRole.Client && net.IsConnected;
-            if (wasConnectedClient && !connectedClient && Game.Match != null)
+            if (wasConnectedClient && !connectedClient && net.Role == NetRole.Client)
             {
-                Plugin.Trace("Disconnects: lost the host, returning to menu");
-                ReturnToMenu();
+                Plugin.Trace("Disconnects: lost the host");
+                string reason = net.Status;
+                net.Stop();               // back to offline (also leaves the Steam lobby)
+                net.SetStatus(reason);    // keep "disconnected: ..." visible in the online menu
+                LastDisconnectReason = reason;
+                if (Game.Match != null) ReturnToMenu();
+            }
+            // Rejected (e.g. version mismatch) before ever connecting: stop retrying.
+            if (net.Role == NetRole.Client && !net.IsConnected && net.Status != null && net.Status.StartsWith("rejected"))
+            {
+                string reason = net.Status;
+                net.Stop();
+                net.SetStatus(reason);
+                LastDisconnectReason = reason;
             }
             wasConnectedClient = connectedClient;
         }
