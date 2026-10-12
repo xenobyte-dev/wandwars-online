@@ -151,7 +151,7 @@ namespace WandWarsMP.Dev
                 if (!haveStart) { start = pos; haveStart = true; }
                 maxDist = Mathf.Max(maxDist, Vector3.Distance(start, pos));
                 string ents = string.Join(" ", match.Players.Select(x =>
-                    (x.PrimaryEntity != null ? $"P{(int)x.PlayerNumber + 1}{(Vector2)x.PrimaryEntity.transform.position}" : $"P{(int)x.PlayerNumber + 1}-") + $"[{x.Score.Value}]").ToArray());
+                    (x.PrimaryEntity != null ? $"P{(int)x.PlayerNumber + 1}{(Vector2)x.PrimaryEntity.transform.position}" : $"P{(int)x.PlayerNumber + 1}-") + $"[{x.Score.Value}|c{x.ChickensEaten.Value}]").ToArray()) + $" ents={Sync.MatchSync.Instance.NetEntityCount}";
                 Plugin.Trace($"DevHarness: host round={match.RoundNumber} rtt={Net.NetSession.Instance.GetRtt(remote.Peer):F1}ms {ents}");
             }
             Plugin.Trace($"DevHarness: RESULT remote max displacement {maxDist:F2}, hexes cast {p.HexesCast}");
@@ -354,7 +354,7 @@ namespace WandWarsMP.Dev
                 nextLog = Time.realtimeSinceStartup + 1f;
                 var sync = Sync.MatchSync.Instance;
                 string ents = string.Join(" ", Game.Match.Players.Select(p =>
-                    (p.PrimaryEntity != null ? $"P{(int)p.PlayerNumber + 1}{(Vector2)p.PrimaryEntity.transform.position}" : $"P{(int)p.PlayerNumber + 1}-") + $"[{p.Score.Value}]").ToArray());
+                    (p.PrimaryEntity != null ? $"P{(int)p.PlayerNumber + 1}{(Vector2)p.PrimaryEntity.transform.position}" : $"P{(int)p.PlayerNumber + 1}-") + $"[{p.Score.Value}|c{p.ChickensEaten.Value}]").ToArray()) + $" ents={Sync.MatchSync.Instance.NetEntityCount}";
                 Plugin.Trace($"DevHarness: client round={Game.Match.RoundNumber} rtt={net.HostRttMs:F0} avgCorr={sync.AvgCorrection:F3} ownCorr={sync.OwnAvgCorrection:F3} align[-2..3]={string.Join("/", sync.AlignErr.Select(x => x.ToString("F2")).ToArray())} snaps={sync.Snaps} {ents}");
             }
             Plugin.Trace($"DevHarness: client done, status={net.Status} rtt={net.HostRttMs:F1}ms state={StateName()}");

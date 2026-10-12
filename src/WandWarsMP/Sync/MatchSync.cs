@@ -82,6 +82,7 @@ namespace WandWarsMP.Sync
             ResetCombat();
             ResetItems();
             ResetStats();
+            ResetEntities();
             lastScoreState.Clear();
             ApplyHostInputDelay(players);
             Plugin.Trace($"Sync: MatchStart sent ({config.MatchType} on '{level}', {players.Count} players, seed {seed})");
@@ -180,7 +181,8 @@ namespace WandWarsMP.Sync
             if (p == null) return null;
             foreach (var e in p.Entities)
                 if (e != null && e.isActiveAndEnabled) return e;
-            return p.PrimaryEntity;
+            var prim = p.PrimaryEntity;
+            return prim != null ? prim : null; // Unity "fake null" (destroyed) -> real null
         }
 
         internal static byte PlayerNum(GameEntity e)
@@ -214,6 +216,7 @@ namespace WandWarsMP.Sync
             HostTrackBalls();
             HostTrackItems();
             HostTrackScores();
+            HostTrackEntities();
             if (tick % SnapshotEveryFrames == 0) SendSnapshot();
         }
 
@@ -238,6 +241,10 @@ namespace WandWarsMP.Sync
             }
             WriteBallSnapshot(w);
             WriteItemSnapshot(w);
+            WriteEntitySnapshot(w);
+            var timer = Object.FindObjectOfType<LevelTimer>();
+            w.Bool(timer != null);
+            if (timer != null) w.F32(timer.RemainingTime);
             net.Broadcast(w, false);
         }
 
@@ -348,6 +355,7 @@ namespace WandWarsMP.Sync
             ResetCombat();
             ResetItems();
             ResetStats();
+            ResetEntities();
             haveFrame = haveSnapshot = false;
             Snaps = 0;
             AvgCorrection = 0;
@@ -434,7 +442,7 @@ namespace WandWarsMP.Sync
             if (Predict && num == localNum && IsPredicted(ability)) return;
             var ent = ActorOf(num);
             var actor = ent as ICharacterActor;
-            if (actor == null) return;
+            if (actor == null || !ent.isActiveAndEnabled) return;
             using (Replay.Begin())
             {
                 if (look != Vector2.zero) Traverse.Create(ent).Field("lastMoveDirection").SetValue(look.normalized);
@@ -476,6 +484,13 @@ namespace WandWarsMP.Sync
             }
             ReadBallSnapshot(ref r);
             ReadItemSnapshot(ref r);
+            ReadEntitySnapshot(ref r);
+            if (r.Bool())
+            {
+                float remaining = r.F32();
+                var timer = Object.FindObjectOfType<LevelTimer>();
+                if (timer != null) timer.RemainingTime = remaining;
+            }
         }
     }
 }

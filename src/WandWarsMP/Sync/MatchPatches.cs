@@ -190,7 +190,8 @@ namespace WandWarsMP.Sync
     {
         private static System.Collections.Generic.IEnumerable<System.Reflection.MethodBase> TargetMethods()
         {
-            foreach (var n in new[] { "Move", "AbilityOne", "AbilityOneRelease", "AbilityTwo", "AbilityThree", "AbilityThreeRelease", "AbilityFour" })
+            // AbilityTwo/Three just call AbilityOne (relaying both would double the bite).
+            foreach (var n in new[] { "Move", "AbilityOne" })
             {
                 var m = AccessTools.DeclaredMethod(typeof(Pacman), n);
                 if (m != null) yield return m;

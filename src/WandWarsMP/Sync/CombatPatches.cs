@@ -251,7 +251,8 @@ namespace WandWarsMP.Sync
         private static void Postfix(MatchBase __instance, ref bool __result)
         {
             if (MatchSync.IsHost && __result) MatchSync.Instance.HostOnRoundOver(__instance);
-            else if (MatchSync.IsClient && !__result) __result = MatchSync.Instance.ClientRoundOver(__instance.RoundNumber);
+            // Client: only the host ends rounds (local timers/conditions can run ahead of the host).
+            else if (MatchSync.IsClient) __result = MatchSync.Instance.ClientRoundOver(__instance.RoundNumber);
         }
     }
 

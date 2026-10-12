@@ -242,7 +242,7 @@ namespace WandWarsMP.Net
             }
             catch (Exception e)
             {
-                Plugin.Log.LogWarning($"Net: bad message from {peer}: {e.Message}");
+                Plugin.Log.LogWarning($"Net: bad message from {peer}: {(e.InnerException ?? e)}");
             }
         }
 

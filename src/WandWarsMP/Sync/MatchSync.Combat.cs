@@ -472,21 +472,28 @@ namespace WandWarsMP.Sync
         {
             var w = net.Begin(Msg.RoundWinner);
             w.U8((byte)match.RoundNumber);
-            if (winner is Player wp) { w.U8(WinPlayer); w.U8((byte)wp.PlayerNumber); }
+            Player single = winner is Player wp0 ? wp0 : null;
+            if (single == null && !(winner is Team) && winner != null && winner.PlayerList != null)
+            {
+                // Mode-specific providers (e.g. Hen Hunt's feather counter) wrapping one player.
+                var list = new List<Player>(winner.PlayerList);
+                if (list.Count == 1) single = list[0];
+            }
+            if (single != null) { w.U8(WinPlayer); w.U8((byte)single.PlayerNumber); }
             else if (winner is Team wt) { w.U8(WinTeam); w.U8((byte)wt.Index); }
             else { w.U8(WinNone); w.U8(0); }
             w.U8((byte)match.Players.Count);
             foreach (var p in match.Players)
             {
                 w.U8((byte)p.PlayerNumber);
-                w.I32(p.Score.Value);
+                w.I32(p.Score != null ? p.Score.Value : 0);
             }
             var teams = match.Teams;
             w.U8((byte)teams.Count);
             for (int i = 0; i < teams.Count; i++)
             {
                 w.U8((byte)i);
-                w.I32(teams[i].Score.Value);
+                w.I32(teams[i].Score != null ? teams[i].Score.Value : 0);
             }
             net.Broadcast(w, true);
             string who = winner is Player p2 ? "P" + ((int)p2.PlayerNumber + 1) : winner is Team t2 ? "team " + t2.Index : "none";
@@ -551,10 +558,10 @@ namespace WandWarsMP.Sync
         {
             if (Game.Match == null) return;
             foreach (var p in Game.Match.Players)
-                if (d.Scores.TryGetValue((byte)p.PlayerNumber, out int s) && p.Score.Value != s) p.Score.Value = s;
+                if (d.Scores.TryGetValue((byte)p.PlayerNumber, out int s) && p.Score != null && p.Score.Value != s) p.Score.Value = s;
             var teams = Game.Match.Teams;
             for (int i = 0; i < teams.Count; i++)
-                if (d.TeamScores.TryGetValue((byte)i, out int ts) && teams[i].Score.Value != ts) teams[i].Score.Value = ts;
+                if (d.TeamScores.TryGetValue((byte)i, out int ts) && teams[i].Score != null && teams[i].Score.Value != ts) teams[i].Score.Value = ts;
         }
 
         // ================= Merlinball =================
@@ -626,6 +633,10 @@ namespace WandWarsMP.Sync
                 case Msg.MatchStats: OnMatchStats(ref r); break;
                 case Msg.Scores: OnScores(ref r); break;
                 case Msg.Respawn: OnRespawn(ref r); break;
+                case Msg.EntitySpawn: OnEntitySpawn(ref r); break;
+                case Msg.EntityDespawn: OnEntityDespawn(ref r); break;
+                case Msg.EntityDeath: OnEntityDeath(ref r); break;
+                case Msg.Beast: OnBeast(ref r); break;
                 case Msg.MatchAbort:
                     Plugin.Trace("Sync[C]: host ended the match");
                     if (Game.Match != null) Game.Match.QuitToMainMenu();

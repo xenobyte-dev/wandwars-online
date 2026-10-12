@@ -403,7 +403,7 @@ namespace WandWarsMP.Sync
     [HarmonyLib.HarmonyPatch(typeof(WandWars.ModeSelectPanel), nameof(WandWars.ModeSelectPanel.Enter))]
     internal static class OnlineModesPatch
     {
-        public static readonly string[] Supported = { "arcane arena", "team arena", "merlinball", "hexout", "team hexout" };
+        public static readonly string[] Supported = { "arcane arena", "team arena", "merlinball", "hexout", "team hexout", "last hen standing", "hen hunt" };
 
         private static void Postfix(WandWars.ModeSelectPanel __instance)
         {
