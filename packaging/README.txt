@@ -7,11 +7,16 @@ Install
   3. Launch the game from Steam as usual.
 
 Play
-  Press F2 in game to open the Online panel.
-  - Host game + invite friends: creates a Steam lobby and opens the invite list.
-  - Friends accept the invite (or use "Join Game" in your Steam friends list).
-  - Direct IP: host on a port (default 27420, UDP) and friends join by IP.
+  Main menu > "online".
+  - Host: "host game" creates a Steam lobby; "invite friends" opens the Steam invite list.
+  - Friends: accept the invite (or "Join Game" in the Steam friends list). The game goes
+    online automatically and waits for the host.
+  - Host picks "start": everyone goes through the normal character select, mode and stage
+    screens together (online players are extra controllers), then the match starts.
   Everyone needs the same mod version.
+
+  Advanced: F2 opens a small panel for direct-IP play (LAN / port-forwarded UDP 27420).
+  BepInEx\config\wandwarsmp.cfg: HostInputDelay (auto/off/ms) keeps things fair for online players.
 
 Uninstall
   Delete winhttp.dll from the game folder (or the BepInEx folder too).

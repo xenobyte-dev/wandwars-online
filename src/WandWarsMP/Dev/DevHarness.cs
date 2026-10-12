@@ -77,6 +77,16 @@ namespace WandWarsMP.Dev
                 case "nativeclient":
                     yield return StartCoroutine(NativeClientScenario());
                     break;
+                case "steamhost":
+                    yield return StartCoroutine(WaitMainMenu());
+                    Net.SteamLobby.Init();
+                    if (Net.SteamLobby.Instance == null) { Plugin.Trace("DevHarness: RESULT steam unavailable"); break; }
+                    Net.SteamLobby.Instance.Host();
+                    yield return new WaitForSeconds(6f);
+                    Plugin.Trace($"DevHarness: RESULT lobby={Net.SteamLobby.Instance.Lobby} inLobby={Net.SteamLobby.Instance.InLobby} status={Net.NetSession.Instance.Status} transport={Net.NetSession.Instance.Transport?.GetType().Name}");
+                    Shot("steam_hosting");
+                    yield return new WaitForSeconds(1f);
+                    break;
                 case "menushots":
                     yield return StartCoroutine(MenuShots());
                     break;
