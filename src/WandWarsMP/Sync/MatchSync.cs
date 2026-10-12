@@ -266,14 +266,22 @@ namespace WandWarsMP.Sync
                 w.Vec2(rb.velocity);
             }
             WriteBallSnapshot(w);
-            WriteItemSnapshot(w);
-            WriteEntitySnapshot(w);
-            WriteEggSnapshot(w);
             var timer = Object.FindObjectOfType<LevelTimer>();
             w.Bool(timer != null);
             if (timer != null) w.F32(timer.RemainingTime);
             net.Broadcast(w, false);
+
+            // Items/entities/eggs travel separately so neither datagram outgrows the 1200-byte limit.
+            var ww = net.Begin(Msg.WorldSnapshot);
+            ww.U32(tick);
+            WriteItemSnapshot(ww);
+            WriteEntitySnapshot(ww);
+            WriteEggSnapshot(ww);
+            net.Broadcast(ww, false);
         }
+
+        /// <summary>Bytes a snapshot section may use (whole datagram stays under UdpTransport.MaxPayload).</summary>
+        internal const int SnapshotBudget = 1100;
 
         private ushort LastInputSeqFor(Player p)
         {
@@ -365,6 +373,7 @@ namespace WandWarsMP.Sync
                 case Msg.Frame: OnFrame(ref r); break;
                 case Msg.Ability: OnAbility(ref r); break;
                 case Msg.Snapshot: OnSnapshot(ref r); break;
+                case Msg.WorldSnapshot: OnWorldSnapshot(ref r); break;
                 default: OnCombatMessage(msg, ref r); break;
             }
         }
@@ -384,7 +393,7 @@ namespace WandWarsMP.Sync
             ResetStats();
             ResetEntities();
             ResetSubMatches();
-            haveFrame = haveSnapshot = false;
+            haveFrame = haveSnapshot = haveWorld = false;
             Snaps = 0;
             AvgCorrection = 0;
         }
@@ -502,6 +511,20 @@ namespace WandWarsMP.Sync
             }
         }
 
+        private uint lastWorldTick;
+        private bool haveWorld;
+
+        private void OnWorldSnapshot(ref NetReader r)
+        {
+            uint t = r.U32();
+            if (haveWorld && (int)(t - lastWorldTick) <= 0) return;
+            haveWorld = true;
+            lastWorldTick = t;
+            ReadItemSnapshot(ref r);
+            ReadEntitySnapshot(ref r);
+            ReadEggSnapshot(ref r);
+        }
+
         private void OnSnapshot(ref NetReader r)
         {
             uint t = r.U32();
@@ -527,9 +550,6 @@ namespace WandWarsMP.Sync
                 rb.velocity = vel;
             }
             ReadBallSnapshot(ref r);
-            ReadItemSnapshot(ref r);
-            ReadEntitySnapshot(ref r);
-            ReadEggSnapshot(ref r);
             if (r.Bool())
             {
                 float remaining = r.F32();

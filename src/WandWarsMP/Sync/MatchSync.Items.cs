@@ -87,13 +87,14 @@ namespace WandWarsMP.Sync
             int count = 0;
             foreach (var kv in itemsById)
                 if (kv.Value != null && kv.Value.isActiveAndEnabled && !kv.Value.IsInInventory) count++;
-            w.U8((byte)Mathf.Min(count, 255));
+            count = Mathf.Min(count, Mathf.Max(0, (SnapshotBudget / 3 - w.Length) / 11), 255); // 11 bytes each
+            w.U8((byte)count);
             int n = 0;
             foreach (var kv in itemsById)
             {
                 var it = kv.Value;
                 if (it == null || !it.isActiveAndEnabled || it.IsInInventory) continue;
-                if (n++ >= 255) break;
+                if (n++ >= count) break;
                 w.U16(kv.Key);
                 w.Vec2(it.transform.position);
                 w.Bool(it.IsInBubble);

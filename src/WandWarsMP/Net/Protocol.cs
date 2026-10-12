@@ -51,6 +51,7 @@ namespace WandWarsMP.Net
         Barrier = 60,       // i32 code: host finished a host-paced sequence (boss intro, victory)
         PortalEnter = 61,   // u8 player
         SpellstormStage = 62, // str: next Spellstorm stage
+        WorldSnapshot = 63, // (unreliable) u32 tick, items, entities, eggs
         MatchStats = 45,    // end-of-match per-player stats (score screen)
         ShotDead = 44,      // u8 caster, vec2 pos: an arcane shot hit something on the host    // host ended the match early: everyone back to the menu
         PostMatch = 36,     // host left the score screen: everyone back to the lobby
@@ -64,7 +65,7 @@ namespace WandWarsMP.Net
     public static class Protocol
     {
         /// <summary>Bump on any wire-format change. Peers with different values refuse each other.</summary>
-        public const ushort Version = 16;
+        public const ushort Version = 17;
         public const int DefaultPort = 27420;
     }
 }

@@ -75,17 +75,20 @@ namespace WandWarsMP.Sync
             }
         }
 
+        private int entityRotate;
+
         private void WriteEntitySnapshot(NetWriter w)
         {
-            int count = 0;
-            foreach (var kv in netEntities) if (kv.Value != null && kv.Value.isActiveAndEnabled) count++;
-            w.U8((byte)Mathf.Min(count, 255));
-            int n = 0;
-            foreach (var kv in netEntities)
+            var live = netEntities.Where(kv => kv.Value != null && kv.Value.isActiveAndEnabled).ToList();
+            // 22 bytes each; when there are more than fit, rotate so every entity gets updates.
+            int max = Mathf.Max(0, (SnapshotBudget - 60 - w.Length) / 22);
+            int count = Mathf.Min(live.Count, max, 255);
+            w.U8((byte)count);
+            if (live.Count > 0) entityRotate %= live.Count;
+            for (int i = 0; i < count; i++)
             {
+                var kv = live[(entityRotate + i) % live.Count];
                 var e = kv.Value;
-                if (e == null || !e.isActiveAndEnabled) continue;
-                if (n++ >= 255) break;
                 var rb = e.GetComponent<Rigidbody2D>();
                 w.U16(kv.Key);
                 w.Vec2(rb != null ? rb.position : (Vector2)e.transform.position);
@@ -93,6 +96,7 @@ namespace WandWarsMP.Sync
                 var ge = e.GetComponent<GameEntity>();
                 w.I16((short)(ge != null ? ge.Health : 0));
             }
+            if (count < live.Count) entityRotate += count;
         }
 
         internal void HostOnEntityDeath(GameEntity e, GameObject src)
