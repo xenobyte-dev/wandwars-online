@@ -412,6 +412,35 @@ namespace WandWarsMP.Sync
             using (Replay.Begin()) pc.Die(src);
         }
 
+        // ================= arcane shots =================
+
+        internal void HostOnShotDead(ArcaneShot shot)
+        {
+            byte owner = OwnerNum(shot.Owner);
+            if (owner == NoPlayer) return;
+            var w = net.Begin(Msg.ShotDead);
+            w.U8(owner);
+            w.Vec2(shot.transform.position);
+            net.Broadcast(w, true);
+        }
+
+        private void OnShotDead(ref NetReader r)
+        {
+            byte owner = r.U8();
+            Vector2 pos = r.Vec2();
+            ArcaneShot best = null;
+            float bestD = 6f; // only shots reasonably near where the host's died
+            foreach (var shot in Object.FindObjectsOfType<ArcaneShot>())
+            {
+                if (shot.State == ArcaneShot.ArcaneShotState.Dead || OwnerNum(shot.Owner) != owner) continue;
+                float d = Vector2.Distance(shot.transform.position, pos);
+                if (d < bestD) { bestD = d; best = shot; }
+            }
+            if (best == null) return;
+            best.transform.position = pos;
+            using (Replay.Begin()) best.SetState(ArcaneShot.ArcaneShotState.Dead);
+        }
+
         // ================= hex =================
 
         internal void HostOnHex(GameEntity target, float duration)
@@ -593,6 +622,7 @@ namespace WandWarsMP.Sync
                 case Msg.RoundWinner: OnRoundWinner(ref r); break;
                 case Msg.PostMatch: ClientLeaveScoreScreen(); break;
                 case Msg.Goal: OnGoal(ref r); break;
+                case Msg.ShotDead: OnShotDead(ref r); break;
                 case Msg.MatchAbort:
                     Plugin.Trace("Sync[C]: host ended the match");
                     if (Game.Match != null) Game.Match.QuitToMainMenu();

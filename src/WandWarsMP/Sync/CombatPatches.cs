@@ -338,3 +338,23 @@ namespace WandWarsMP.Sync
         private static bool Prefix() => !(MatchSync.IsClient && WandWars.Game.Match != null);
     }
 }
+
+namespace WandWarsMP.Sync
+{
+    /// <summary>
+    /// Host: an arcane shot that hit a player dies; tell clients so their (non-colliding) copy of that
+    /// caster's shot dies at the same spot instead of flying through the target.
+    /// </summary>
+    [HarmonyLib.HarmonyPatch(typeof(WandWars.ArcaneShot), "OnTriggerEnter2D")]
+    internal static class ArcaneShotHitHostPatch
+    {
+        private static void Prefix(WandWars.ArcaneShot __instance, out WandWars.ArcaneShot.ArcaneShotState __state) => __state = __instance.State;
+
+        private static void Postfix(WandWars.ArcaneShot __instance, WandWars.ArcaneShot.ArcaneShotState __state)
+        {
+            if (Authority.HostSending && __state != WandWars.ArcaneShot.ArcaneShotState.Dead
+                && __instance.State == WandWars.ArcaneShot.ArcaneShotState.Dead)
+                MatchSync.Instance.HostOnShotDead(__instance);
+        }
+    }
+}

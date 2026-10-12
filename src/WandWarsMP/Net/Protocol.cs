@@ -33,7 +33,8 @@ namespace WandWarsMP.Net
         ItemDespawn = 38,   // u16 id
         ItemPickup = 39,    // u8 player, u16 item
         Goal = 35,          // u8 targetTeam, u16 ball, vec2 pos, vec2 dir, u8 owner
-        MatchAbort = 43,    // host ended the match early: everyone back to the menu
+        MatchAbort = 43,
+        ShotDead = 44,      // u8 caster, vec2 pos: an arcane shot hit something on the host    // host ended the match early: everyone back to the menu
         PostMatch = 36,     // host left the score screen: everyone back to the lobby
 
         // lobby
@@ -45,7 +46,7 @@ namespace WandWarsMP.Net
     public static class Protocol
     {
         /// <summary>Bump on any wire-format change. Peers with different values refuse each other.</summary>
-        public const ushort Version = 6;
+        public const ushort Version = 7;
         public const int DefaultPort = 27420;
     }
 }
