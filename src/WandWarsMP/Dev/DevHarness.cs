@@ -55,11 +55,15 @@ namespace WandWarsMP.Dev
                 if (cur != last) { Plugin.Trace("DevHarness: waiting, state=" + cur); last = cur; }
                 yield return null;
             }
-            Plugin.Trace($"DevHarness: lobby reached after {Time.realtimeSinceStartup - t0:F1}s");
+            Plugin.Trace($"DevHarness: lobby reached after {Time.realtimeSinceStartup - t0:F1}s; roster unlocked={Game.GlobalResources.GetCharacters().Length} all={Game.GlobalResources.GetCharacters(true).Length}");
             yield return new WaitForSeconds(2f);
 
             switch (Get("mode", "census"))
             {
+                case "watch":
+                    yield return StartCoroutine(StartBotMatch(int.Parse(Get("bots", "8")), null));
+                    yield return StartCoroutine(Watch(float.Parse(Get("seconds", "240"))));
+                    break;
                 case "census":
                     yield return StartCoroutine(StartBotMatch(int.Parse(Get("bots", "4")), null));
                     yield return new WaitForSeconds(5f);
@@ -113,7 +117,7 @@ namespace WandWarsMP.Dev
             for (int i = 0; i < total; i++)
             {
                 bool human = humans != null && i < humans.Count;
-                players.Add(new Player(chars[i % chars.Count], (PlayerNumber)i, human ? humans[i] : null, null, isBot: !human));
+                players.Add(new Player(chars[i % chars.Count], Sync.EightPlayers.NumberFor(i), human ? humans[i] : null, null, isBot: !human));
             }
             var type = MatchType.Deathmatch;
             try { type = (MatchType)System.Enum.Parse(typeof(MatchType), Get("matchtype", "Deathmatch"), true); }
@@ -122,7 +126,9 @@ namespace WandWarsMP.Dev
                 for (int i = 0; i < players.Count; i++) players[i].Team = Game.GlobalResources.Teams[i % 2];
             Plugin.Trace($"DevHarness: starting {type} on {stage}, {total} players ({humans?.Count ?? 0} human)");
             // Same path as the real menu flow, so sync hooks (CreateMatch postfix) fire.
-            Game.GameStateMachine.Start(GameLobby.CreateMatch(stage, players, new MatchConfig { MatchType = type }));
+            var config = new MatchConfig { MatchType = type };
+            if (Get("scorelimit", "") != "") config.ScoreLimit = int.Parse(Get("scorelimit", ""));
+            Game.GameStateMachine.Start(GameLobby.CreateMatch(stage, players, config));
             while (!(Game.State is MatchBase)) yield return null;
         }
 
@@ -365,6 +371,40 @@ namespace WandWarsMP.Dev
                 Plugin.Trace($"DevHarness: client round={Game.Match.RoundNumber} rtt={net.HostRttMs:F0} avgCorr={sync.AvgCorrection:F3} ownCorr={sync.OwnAvgCorrection:F3} align[-2..3]={string.Join("/", sync.AlignErr.Select(x => x.ToString("F2")).ToArray())} snaps={sync.Snaps} {ents}");
             }
             Plugin.Trace($"DevHarness: client done, status={net.Status} rtt={net.HostRttMs:F1}ms state={StateName()}");
+        }
+
+        /// <summary>Screenshots a bot match periodically and its score screen.</summary>
+        private IEnumerator Watch(float seconds)
+        {
+            float end = Time.realtimeSinceStartup + seconds, nextShot = Time.realtimeSinceStartup + 12f;
+            int n = 0, hudShots = 0;
+            while (Time.realtimeSinceStartup < end)
+            {
+                var mb = Game.Match;
+                var rsm = mb != null ? HarmonyLib.Traverse.Create(mb).Field("roundScoreModule").GetValue<Component>() : null;
+                if (rsm != null && rsm.gameObject.activeInHierarchy && hudShots < 2)
+                {
+                    yield return new WaitForSeconds(1.5f);
+                    Shot("watch_hud" + hudShots++ + "a");
+                    yield return new WaitForSeconds(2.5f);
+                    Shot("watch_hud" + (hudShots - 1) + "b");
+                    while (rsm != null && rsm.gameObject.activeInHierarchy) yield return null;
+                    continue;
+                }
+                if (mb != null && mb.MatchState == MatchState.ScoreScreen)
+                {
+                    yield return new WaitForSeconds(9f);
+                    Shot("watch_score");
+                    yield return null;
+                    yield break;
+                }
+                if (Time.realtimeSinceStartup > nextShot && n < 3)
+                {
+                    nextShot = Time.realtimeSinceStartup + 15f;
+                    Shot("watch_" + n++);
+                }
+                yield return null;
+            }
         }
 
         private IEnumerator Census(float seconds)
