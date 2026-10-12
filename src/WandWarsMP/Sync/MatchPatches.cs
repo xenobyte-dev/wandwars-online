@@ -25,10 +25,18 @@ namespace WandWarsMP.Sync
             if (!MatchSync.IsClient || entity == null) return;
             var input = entity.GetComponent<PlayerInput>();
             if (input != null) Object.DestroyImmediate(input);
-            var ai = entity.GetComponent<EntityAI>();
-            if (ai != null) Object.DestroyImmediate(ai);
-            var cai = entity.GetComponent<CharacterAI>();
-            if (cai != null) Object.DestroyImmediate(cai);
+            StripAI(entity.gameObject);
+        }
+
+        /// <summary>Removes every AI brain (EntityAI adds CharacterAI/PacmanAI/... in its Awake).</summary>
+        internal static void StripAI(GameObject go)
+        {
+            foreach (var c in go.GetComponents<MonoBehaviour>())
+            {
+                if (c == null) continue;
+                string n = c.GetType().Name;
+                if (c is EntityAI || n.EndsWith("AI") || n == "AIPathingAgent") Object.DestroyImmediate(c);
+            }
         }
     }
 
@@ -47,7 +55,7 @@ namespace WandWarsMP.Sync
     internal static class AbilityRelay
     {
         public static bool AllowOnClient() => !MatchSync.IsClient || Replay.Active || Game.Match == null;
-        public static void Record(PlayerController pc, byte ability)
+        public static void Record(GameEntity pc, byte ability)
         {
             if (MatchSync.IsHost) MatchSync.Instance.HostRecordAbility(pc, ability);
         }
@@ -169,6 +177,48 @@ namespace WandWarsMP.Sync
             }
             if (playerWithBall != null)
                 yield return match.StartCoroutine(t.Method("SpawnBall", playerWithBall).GetValue<IEnumerator>());
+        }
+    }
+}
+
+
+namespace WandWarsMP.Sync
+{
+    /// <summary>The Hen Hunt / Last Hen Standing beast is its own actor; relay it exactly like a wizard.</summary>
+    [HarmonyPatch]
+    internal static class PacmanActorPatch
+    {
+        private static System.Collections.Generic.IEnumerable<System.Reflection.MethodBase> TargetMethods()
+        {
+            foreach (var n in new[] { "Move", "AbilityOne", "AbilityOneRelease", "AbilityTwo", "AbilityThree", "AbilityThreeRelease", "AbilityFour" })
+            {
+                var m = AccessTools.DeclaredMethod(typeof(Pacman), n);
+                if (m != null) yield return m;
+            }
+        }
+
+        private static bool Prefix(Pacman __instance, System.Reflection.MethodBase __originalMethod, object[] __args)
+        {
+            if (MatchSync.IsHost)
+            {
+                string n = __originalMethod.Name;
+                if (n == "Move") MatchSync.Instance.HostRecordMove(__instance, (Vector2)__args[0]);
+                else AbilityRelay.Record(__instance, AbilityId(n));
+            }
+            return AbilityRelay.AllowOnClient();
+        }
+
+        private static byte AbilityId(string n)
+        {
+            switch (n)
+            {
+                case "AbilityOne": return MatchSync.AbOne;
+                case "AbilityOneRelease": return MatchSync.AbOneRelease;
+                case "AbilityTwo": return MatchSync.AbTwo;
+                case "AbilityThree": return MatchSync.AbThree;
+                case "AbilityThreeRelease": return MatchSync.AbThreeRelease;
+                default: return MatchSync.AbFour;
+            }
         }
     }
 }

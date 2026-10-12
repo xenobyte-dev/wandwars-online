@@ -166,7 +166,7 @@ namespace WandWarsMP.Sync
 
         private void OnItemPickup(ref NetReader r)
         {
-            var pc = EntityOf(r.U8());
+            var pc = ActorOf(r.U8());
             ushort id = r.U16();
             if (pc == null || pc.Inventory == null || !itemsById.TryGetValue(id, out var it) || it == null) return;
             if (!it.gameObject.activeSelf) it.gameObject.SetActive(true);

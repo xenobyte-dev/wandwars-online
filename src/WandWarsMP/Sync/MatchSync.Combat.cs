@@ -147,7 +147,7 @@ namespace WandWarsMP.Sync
                 if (b.State != state) b.SetState(state);
                 if (OwnerNum(b.Owner) != owner && !held)
                 {
-                    var pc = owner == NoPlayer ? null : EntityOf(owner);
+                    var pc = owner == NoPlayer ? null : ActorOf(owner);
                     b.Owner = pc != null ? pc.SpellOwner : null;
                 }
             }
@@ -167,7 +167,7 @@ namespace WandWarsMP.Sync
             finally { SpawningNetBall = false; }
             ballsById[id] = b;
             ballIds[b] = id;
-            var pc = owner == NoPlayer ? null : EntityOf(owner);
+            var pc = owner == NoPlayer ? null : ActorOf(owner);
             if (pc != null) b.Owner = pc.SpellOwner;
             b.NormalizedSpeed = speed;
             b.Size = size;
@@ -383,7 +383,7 @@ namespace WandWarsMP.Sync
 
         private void OnDamage(ref NetReader r)
         {
-            var pc = EntityOf(r.U8());
+            var pc = ActorOf(r.U8());
             int amount = r.U8();
             if (pc == null) { r.U8(); r.U16(); return; }
             var src = ReadSource(ref r, pc);
@@ -405,7 +405,7 @@ namespace WandWarsMP.Sync
 
         private void OnDeath(ref NetReader r)
         {
-            var pc = EntityOf(r.U8());
+            var pc = ActorOf(r.U8());
             if (pc == null) { r.U8(); r.U16(); return; }
             var src = ReadSource(ref r, pc);
             Plugin.Trace($"Sync[C]: death P{(int)pc.Player.PlayerNumber + 1} src={src.name}");
@@ -455,9 +455,9 @@ namespace WandWarsMP.Sync
 
         private void OnHex(ref NetReader r)
         {
-            var pc = EntityOf(r.U8());
+            var pc = ActorOf(r.U8());
             float duration = r.F32();
-            if (pc == null) return;
+            if (pc == null || !pc.gameObject.activeInHierarchy) return;
             using (Replay.Begin())
             {
                 if (pc.AnyRoutinesRunning("hex")) pc.StopAllRoutines("hex");
@@ -591,7 +591,7 @@ namespace WandWarsMP.Sync
             ball.Rigidbody2D.position = pos;
             ball.Direction = dir;
             if (ball.State != Ball.BallState.Normal) ball.SetState(Ball.BallState.Normal);
-            var pc = owner == NoPlayer ? null : EntityOf(owner);
+            var pc = owner == NoPlayer ? null : ActorOf(owner);
             ball.Owner = pc != null ? pc.SpellOwner : null;
             Plugin.Trace($"Sync[C]: goal in target {teamIndex} by P{owner + 1}");
             using (Replay.Begin())
@@ -624,6 +624,8 @@ namespace WandWarsMP.Sync
                 case Msg.Goal: OnGoal(ref r); break;
                 case Msg.ShotDead: OnShotDead(ref r); break;
                 case Msg.MatchStats: OnMatchStats(ref r); break;
+                case Msg.Scores: OnScores(ref r); break;
+                case Msg.Respawn: OnRespawn(ref r); break;
                 case Msg.MatchAbort:
                     Plugin.Trace("Sync[C]: host ended the match");
                     if (Game.Match != null) Game.Match.QuitToMainMenu();

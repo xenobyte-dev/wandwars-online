@@ -116,11 +116,8 @@ namespace WandWarsMP.Dev
                 players.Add(new Player(chars[i % chars.Count], (PlayerNumber)i, human ? humans[i] : null, null, isBot: !human));
             }
             var type = MatchType.Deathmatch;
-            switch (Get("matchtype", "deathmatch"))
-            {
-                case "merlinball": type = MatchType.Merlinball; break;
-                case "teamdeathmatch": type = MatchType.TeamDeathmatch; break;
-            }
+            try { type = (MatchType)System.Enum.Parse(typeof(MatchType), Get("matchtype", "Deathmatch"), true); }
+            catch { Plugin.Trace("DevHarness: unknown matchtype " + Get("matchtype", "")); }
             if (type.IsTeam())
                 for (int i = 0; i < players.Count; i++) players[i].Team = Game.GlobalResources.Teams[i % 2];
             Plugin.Trace($"DevHarness: starting {type} on {stage}, {total} players ({humans?.Count ?? 0} human)");

@@ -82,6 +82,7 @@ namespace WandWarsMP.Sync
             ResetCombat();
             ResetItems();
             ResetStats();
+            lastScoreState.Clear();
             ApplyHostInputDelay(players);
             Plugin.Trace($"Sync: MatchStart sent ({config.MatchType} on '{level}', {players.Count} players, seed {seed})");
         }
@@ -151,13 +152,13 @@ namespace WandWarsMP.Sync
             net.Broadcast(w, true);
         }
 
-        public void HostRecordMove(PlayerController pc, Vector2 dir)
+        public void HostRecordMove(GameEntity pc, Vector2 dir)
         {
             byte num = PlayerNum(pc);
             if (num != NoPlayer) hostMoves[num] = dir;
         }
 
-        public void HostRecordAbility(PlayerController pc, byte ability)
+        public void HostRecordAbility(GameEntity pc, byte ability)
         {
             byte num = PlayerNum(pc);
             if (num == NoPlayer) return;
@@ -170,11 +171,23 @@ namespace WandWarsMP.Sync
             net.Broadcast(w, true);
         }
 
+        /// <summary>
+        /// The entity a player currently controls. Usually PrimaryEntity, but transformations (the Hen Hunt
+        /// beast) add a new entity and only deactivate the wizard, leaving PrimaryEntity pointing at it.
+        /// </summary>
+        internal static GameEntity ActiveEntity(Player p)
+        {
+            if (p == null) return null;
+            foreach (var e in p.Entities)
+                if (e != null && e.isActiveAndEnabled) return e;
+            return p.PrimaryEntity;
+        }
+
         internal static byte PlayerNum(GameEntity e)
         {
-            var player = e.SpellOwner?.Player;
+            var player = e != null && e.SpellOwner != null ? e.SpellOwner.Player : null;
             if (player == null || Game.Match == null || !Game.Match.Players.Contains(player)) return NoPlayer;
-            if (player.PrimaryEntity != e) return NoPlayer; // clones etc. not synced yet
+            if (ActiveEntity(player) != e) return NoPlayer; // clones / hidden wizard: not synced
             return (byte)player.PlayerNumber;
         }
 
@@ -200,6 +213,7 @@ namespace WandWarsMP.Sync
 
             HostTrackBalls();
             HostTrackItems();
+            HostTrackScores();
             if (tick % SnapshotEveryFrames == 0) SendSnapshot();
         }
 
@@ -214,7 +228,7 @@ namespace WandWarsMP.Sync
             {
                 w.U8((byte)p.PlayerNumber);
                 w.U16(LastInputSeqFor(p));
-                var e = p.PrimaryEntity;
+                var e = ActiveEntity(p);
                 var rb = e != null ? e.Rigidbody2D : null;
                 bool has = rb != null && e.gameObject.activeInHierarchy;
                 w.Bool(has);
@@ -245,7 +259,7 @@ namespace WandWarsMP.Sync
         private readonly ushort[] histSeq = new ushort[128];
         private readonly Vector2[] histPos = new Vector2[128];
         private byte prevButtons;
-        private PlayerController histEntity;
+        private GameEntity histEntity;
         public float OwnAvgCorrection { get; private set; }
 
         private static bool IsPredicted(byte ability) =>
@@ -255,8 +269,9 @@ namespace WandWarsMP.Sync
         private void OnLocalInput(ushort seq, InputState s)
         {
             if (!Predict || !IsClient || Game.Match == null || localNum == NoPlayer) return;
-            var pc = EntityOf(localNum);
-            if (pc == null || !pc.gameObject.activeInHierarchy || pc.Rigidbody2D == null) { prevButtons = s.Buttons; return; }
+            var pc = ActorOf(localNum);
+            var actor = pc as ICharacterActor;
+            if (pc == null || actor == null || !pc.gameObject.activeInHierarchy || pc.Rigidbody2D == null) { prevButtons = s.Buttons; return; }
             if (pc != histEntity)
             {
                 // New life (respawn / new round): old positions mean nothing.
@@ -273,12 +288,12 @@ namespace WandWarsMP.Sync
             prevButtons = s.Buttons;
             using (Replay.Begin())
             {
-                if (dir != Vector2.zero) pc.Move(dir);
-                if ((pressed & InputState.A) != 0) pc.AbilityOne();
-                else if ((released & InputState.A) != 0) pc.AbilityOneRelease();
+                if (dir != Vector2.zero) actor.Move(dir);
+                if ((pressed & InputState.A) != 0) actor.AbilityOne();
+                else if ((released & InputState.A) != 0) actor.AbilityOneRelease();
                 else if ((pressed & InputState.B) != 0) { /* ultimate: host-driven */ }
-                else if ((pressed & InputState.X) != 0) pc.AbilityThree();
-                if ((released & InputState.X) != 0) pc.AbilityThreeRelease();
+                else if ((pressed & InputState.X) != 0) actor.AbilityThree();
+                if ((released & InputState.X) != 0) actor.AbilityThreeRelease();
             }
         }
 
@@ -359,20 +374,26 @@ namespace WandWarsMP.Sync
                 foreach (var kv in clientMoves)
                 {
                     if (kv.Value == Vector2.zero || (Predict && kv.Key == localNum)) continue;
-                    var pc = EntityOf(kv.Key);
-                    if (pc != null) pc.Move(kv.Value);
+                    var actor = ActorOf(kv.Key) as ICharacterActor;
+                    if (actor != null) actor.Move(kv.Value);
                 }
             }
         }
 
-        internal static PlayerController EntityOf(byte num)
+        internal static Player PlayerOf(byte num)
         {
             var m = Game.Match;
             if (m == null) return null;
             foreach (var p in m.Players)
-                if ((byte)p.PlayerNumber == num) return p.PrimaryEntity as PlayerController;
+                if ((byte)p.PlayerNumber == num) return p;
             return null;
         }
+
+        /// <summary>The player's active entity (wizard or beast), for anything an entity can do.</summary>
+        internal static GameEntity ActorOf(byte num) => ActiveEntity(PlayerOf(num));
+
+        /// <summary>The player's active entity if it's a wizard (catching etc.); null while transformed.</summary>
+        internal static PlayerController EntityOf(byte num) => ActorOf(num) as PlayerController;
 
         private void OnRoundSpawn(ref NetReader r)
         {
@@ -411,19 +432,20 @@ namespace WandWarsMP.Sync
             byte ability = r.U8();
             var look = new Vector2(r.I8() / 127f, r.I8() / 127f);
             if (Predict && num == localNum && IsPredicted(ability)) return;
-            var pc = EntityOf(num);
-            if (pc == null) return;
+            var ent = ActorOf(num);
+            var actor = ent as ICharacterActor;
+            if (actor == null) return;
             using (Replay.Begin())
             {
-                if (look != Vector2.zero) Traverse.Create(pc).Field("lastMoveDirection").SetValue(look.normalized);
+                if (look != Vector2.zero) Traverse.Create(ent).Field("lastMoveDirection").SetValue(look.normalized);
                 switch (ability)
                 {
-                    case AbOne: pc.AbilityOne(); break;
-                    case AbOneRelease: pc.AbilityOneRelease(); break;
-                    case AbTwo: pc.AbilityTwo(); break;
-                    case AbThree: pc.AbilityThree(); break;
-                    case AbThreeRelease: pc.AbilityThreeRelease(); break;
-                    case AbFour: pc.AbilityFour(); break;
+                    case AbOne: actor.AbilityOne(); break;
+                    case AbOneRelease: actor.AbilityOneRelease(); break;
+                    case AbTwo: actor.AbilityTwo(); break;
+                    case AbThree: actor.AbilityThree(); break;
+                    case AbThreeRelease: actor.AbilityThreeRelease(); break;
+                    case AbFour: actor.AbilityFour(); break;
                 }
             }
         }
@@ -441,7 +463,7 @@ namespace WandWarsMP.Sync
                 ushort inSeq = r.U16();
                 if (!r.Bool()) continue;
                 Vector2 pos = r.Vec2(), vel = r.Vec2();
-                var pc = EntityOf(num);
+                var pc = ActorOf(num);
                 var rb = pc != null ? pc.Rigidbody2D : null;
                 if (rb == null || !pc.gameObject.activeInHierarchy) continue;
                 if (Predict && num == localNum) { Reconcile(rb, pos, inSeq); continue; }
