@@ -29,7 +29,7 @@ namespace WandWarsMP.Net
         Hex = 32,           // u8 target, f32 duration
         RoundWinner = 33,   // u8 round, u8 kind, u8 winner, players (u8 num, i32 score), teams (u8 idx, i32 score)
         RoundOver = 34,     // u8 round
-        ItemSpawn = 37,     // u16 id, str powerupName, vec2 pos
+        ItemSpawn = 37,     // u16 id, str powerupName, vec2 pos, bool inBubble
         ItemDespawn = 38,   // u16 id
         ItemPickup = 39,    // u8 player, u16 item
         Goal = 35,          // u8 targetTeam, u16 ball, vec2 pos, vec2 dir, u8 owner
@@ -46,7 +46,7 @@ namespace WandWarsMP.Net
     public static class Protocol
     {
         /// <summary>Bump on any wire-format change. Peers with different values refuse each other.</summary>
-        public const ushort Version = 7;
+        public const ushort Version = 8;
         public const int DefaultPort = 27420;
     }
 }

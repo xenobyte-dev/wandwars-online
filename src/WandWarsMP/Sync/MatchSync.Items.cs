@@ -46,6 +46,7 @@ namespace WandWarsMP.Sync
             w.U16(mark.Id);
             w.Str(item.PowerupName);
             w.Vec2(item.transform.position);
+            w.Bool(item.IsInBubble);
             net.Broadcast(w, true);
             return mark.Id;
         }
@@ -93,6 +94,7 @@ namespace WandWarsMP.Sync
                 if (n++ >= 255) break;
                 w.U16(kv.Key);
                 w.Vec2(it.transform.position);
+                w.Bool(it.IsInBubble);
             }
         }
 
@@ -105,10 +107,20 @@ namespace WandWarsMP.Sync
             {
                 ushort id = r.U16();
                 Vector2 pos = r.Vec2();
+                bool inBubble = r.Bool();
                 if (!itemsById.TryGetValue(id, out var it) || it == null || it.IsInInventory) continue;
-                Vector2 cur = it.transform.position;
+                var bubble = it.GetComponentInParent<ItemBubble>();
+                if (bubble != null && !inBubble)
+                {
+                    // Host popped it: pop ours (natively, with its burst effect).
+                    using (Replay.Begin()) bubble.TakeDamage(999, null);
+                    bubble = null;
+                }
+                // Inside a bubble the item rides the bubble; move the bubble instead.
+                Transform t = bubble != null ? bubble.transform : it.transform;
+                Vector2 cur = t.position;
                 Vector2 err = pos - cur;
-                it.transform.position = err.magnitude > SnapDistance ? pos : cur + err * PosBlend;
+                t.position = err.magnitude > SnapDistance ? pos : cur + err * PosBlend;
             }
         }
 
@@ -117,6 +129,7 @@ namespace WandWarsMP.Sync
             ushort id = r.U16();
             string name = r.Str();
             Vector2 pos = r.Vec2();
+            bool inBubble = r.Bool();
             if (itemsById.ContainsKey(id)) return;
             if (!Game.GlobalResources.Items.TryGetValue(name, out var entry) || entry.Prefab == null)
             {
@@ -132,6 +145,15 @@ namespace WandWarsMP.Sync
             }
             finally { SpawningNetItem = false; }
             itemsById[id] = item;
+            if (inBubble)
+            {
+                var spawner = Object.FindObjectOfType<PowerupSpawner>();
+                if (spawner != null && spawner.ItemBubblePrefab != null)
+                {
+                    var bubble = Staple.Scene.InstantiateInScene<ItemBubble>(spawner.ItemBubblePrefab, pos, Quaternion.identity);
+                    bubble.SetItem(item.gameObject);
+                }
+            }
         }
 
         private void OnItemDespawn(ref NetReader r)
@@ -178,6 +200,18 @@ namespace WandWarsMP.Sync
         {
             if (Authority.HostSending && powerupItem != null && powerupItem.IsInInventory)
                 MatchSync.Instance.HostOnPickup(__instance, powerupItem);
+        }
+    }
+
+    /// <summary>Client: bubbles pop only when the host's item leaves its bubble.</summary>
+    [HarmonyPatch(typeof(ItemBubble), nameof(ItemBubble.TakeDamage))]
+    internal static class BubbleDamagePatch
+    {
+        private static bool Prefix(ItemBubble __instance, ref bool __result)
+        {
+            if (!Authority.BlockLocal) return true;
+            __result = false;
+            return false;
         }
     }
 
