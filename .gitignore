@@ -7,3 +7,6 @@ dist/
 *.user
 .vs/
 tools/.venv/
+
+# Local notes, never publish
+docs/
