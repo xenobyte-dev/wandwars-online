@@ -247,3 +247,29 @@ namespace WandWarsMP.Sync
         private static bool Prefix() => !MatchSync.Online;
     }
 }
+
+namespace WandWarsMP.Sync
+{
+    /// <summary>
+    /// Client: its round cleanup runs a moment after the host's (it waits for the host's winner), by
+    /// which time the host may already have spawned the next round's ball/items. Host-owned objects are
+    /// removed only by the host's despawn messages.
+    /// </summary>
+    [HarmonyLib.HarmonyPatch(typeof(WandWars.Ball), nameof(WandWars.Ball.OnLevelReset))]
+    internal static class BallLevelResetPatch
+    {
+        private static bool Prefix() => !(MatchSync.IsClient && WandWars.Game.Match != null);
+    }
+
+    [HarmonyLib.HarmonyPatch(typeof(WandWars.Ball), nameof(WandWars.Ball.CleanUpAllBalls))]
+    internal static class BallCleanUpPatch
+    {
+        private static bool Prefix() => !(MatchSync.IsClient && WandWars.Game.Match != null);
+    }
+
+    [HarmonyLib.HarmonyPatch(typeof(WandWars.PowerupItem), nameof(WandWars.PowerupItem.DestroyAll))]
+    internal static class ItemsDestroyAllPatch
+    {
+        private static bool Prefix() => !(MatchSync.IsClient && WandWars.Game.Match != null);
+    }
+}

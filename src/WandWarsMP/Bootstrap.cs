@@ -29,7 +29,6 @@ namespace WandWarsMP
             Plugin.Trace($"Game booted. Dev mode: {Dev.DevMode.Enabled}");
             Net.NetSession.Ensure();
             Sync.MatchSync.Ensure();
-            Sync.OnlineLobby.Ensure();
             Sync.Disconnects.Ensure();
             UI.NativeOnlineMenu.Ensure();
             Sync.MenuSync.Ensure();

@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using HarmonyLib;
 using Staple;
 using UnityEngine;
@@ -327,9 +328,18 @@ namespace WandWarsMP.Sync
             {
                 var b = BallById(id);
                 if (b != null) return b.gameObject;
+                Plugin.Trace($"Sync[C]: kill source ball {id} missing (known: {string.Join(",", ballsById.Select(kv => kv.Key + (kv.Value == null ? "x" : "")).ToArray())})");
             }
-            // TODO: spell kills (attribute to the caster); falls back to self (no kill credit).
-            return target.gameObject;
+            if (kind == SrcPlayer)
+            {
+                // Spell kill: any live spell cast by that player gives the game the same attribution.
+                foreach (var sp in Object.FindObjectsOfType<Spell>())
+                {
+                    var owner = sp.Owner?.Entity;
+                    if (owner != null && PlayerNum(owner) == id) return sp.gameObject;
+                }
+            }
+            return target.gameObject; // no credit (suicide-like), same as the game for unknown sources
         }
 
         internal void HostOnDamage(GameEntity target, int amount, GameObject src, int preHealth, bool died)

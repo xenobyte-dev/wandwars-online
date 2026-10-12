@@ -83,12 +83,6 @@ namespace WandWarsMP.Dev
                 case "uidump":
                     yield return StartCoroutine(UiDump());
                     break;
-                case "lobbyhost":
-                    yield return StartCoroutine(LobbyHostScenario());
-                    break;
-                case "lobbyclient":
-                    yield return StartCoroutine(LobbyClientScenario());
-                    break;
             }
 
             if (Get("quit", "true") == "true") Application.Quit();
@@ -303,72 +297,6 @@ namespace WandWarsMP.Dev
         }
 
         private static string StateName() => Game.State == null ? "null" : Game.State.GetType().Name;
-
-        /// <summary>Full flow: lobby -> ready -> match to score limit -> back to lobby, N times.</summary>
-        private IEnumerator LobbyHostScenario()
-        {
-            var net = Net.NetSession.Ensure();
-            net.StartHost(int.Parse(Get("port", Net.Protocol.DefaultPort.ToString())));
-            var lobby = Sync.OnlineLobby.Instance;
-            int matches = int.Parse(Get("matches", "2"));
-            float deadline = Time.realtimeSinceStartup + float.Parse(Get("seconds", "300"));
-            string lastState = null;
-            for (int m = 0; m < matches && Time.realtimeSinceStartup < deadline; m++)
-            {
-                lobby.ScoreLimit = int.Parse(Get("score", "2"));
-                lobby.Bots = int.Parse(Get("bots", "1"));
-                lobby.MarkDirty();
-                while ((!lobby.CanStart || net.Remotes.Count == 0) && Time.realtimeSinceStartup < deadline) yield return null;
-                if (!lobby.CanStart) { Plugin.Trace("DevHarness: lobby never ready"); yield break; }
-                Plugin.Trace($"DevHarness: lobby ready, starting match {m + 1}");
-                lobby.StartMatch();
-                while (!(Game.State is MatchBase)) yield return null;
-                while (!(Game.State is GameLobby) && Time.realtimeSinceStartup < deadline)
-                {
-                    if (StateName() != lastState) { lastState = StateName(); Plugin.Trace("DevHarness: host state " + lastState); }
-                    var mb = Game.Match;
-                    if (mb != null && mb.MatchState.ToString() != lastMatchState) { lastMatchState = mb.MatchState.ToString(); Plugin.Trace("DevHarness: host matchState " + lastMatchState); }
-                    yield return null;
-                }
-                Plugin.Trace($"DevHarness: host back in lobby after match {m + 1} (scores were logged by sync)");
-                lastState = null;
-                yield return new WaitForSeconds(2f);
-            }
-            Plugin.Trace("DevHarness: RESULT host completed matches");
-        }
-
-        private string lastMatchState;
-
-        private IEnumerator LobbyClientScenario()
-        {
-            var net = Net.NetSession.Ensure();
-            net.LocalName = "TestClient";
-            net.Capture.Script = t => new Net.ScriptedInput
-            {
-                Move = new Vector2(Mathf.Cos(t), Mathf.Sin(t)),
-                Buttons = (t % 1f) < 0.1f ? Net.InputState.A : 0,
-            };
-            net.StartClient(Get("connect", "127.0.0.1"), int.Parse(Get("port", Net.Protocol.DefaultPort.ToString())));
-            var lobby = Sync.OnlineLobby.Instance;
-            float end = Time.realtimeSinceStartup + float.Parse(Get("seconds", "300"));
-            string lastState = null;
-            float nextPick = 0;
-            while (Time.realtimeSinceStartup < end && net.Role != Net.NetRole.None)
-            {
-                if (StateName() != lastState) { lastState = StateName(); Plugin.Trace("DevHarness: client state " + lastState); }
-                var mb = Game.Match;
-                if (mb != null && mb.MatchState.ToString() != lastMatchState) { lastMatchState = mb.MatchState.ToString(); Plugin.Trace("DevHarness: client matchState " + lastMatchState); }
-                var me = lobby.LocalSlot;
-                if (lobby.InMenu && me != null && !me.Ready && Time.realtimeSinceStartup > nextPick)
-                {
-                    nextPick = Time.realtimeSinceStartup + 1f;
-                    lobby.SendPick(0, true);
-                    Plugin.Trace("DevHarness: client ready");
-                }
-                yield return null;
-            }
-            Plugin.Trace($"DevHarness: client done, status={net.Status}");
-        }
 
         private IEnumerator NetClientScenario()
         {
