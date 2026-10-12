@@ -46,8 +46,12 @@ namespace WandWarsMP.Sync
     [HarmonyPatch(typeof(GameUISettings), nameof(GameUISettings.InitializeDefaults))]
     internal static class UISettingsResizePatch
     {
-        private static void Postfix(GameUISettings __instance)
+        private static void Postfix(GameUISettings __instance) => Ensure(__instance);
+
+        /// <summary>Saved settings from disk can still be 4 long; call before anything indexes them.</summary>
+        internal static void Ensure(GameUISettings __instance)
         {
+            if (__instance == null) return;
             var configs = __instance.CharacterSelectionConfig;
             if (configs != null && configs.Length < EightPlayers.MaxPlayers)
             {
@@ -56,7 +60,7 @@ namespace WandWarsMP.Sync
                 for (int i = old; i < configs.Length; i++)
                     configs[i] = new CharacterSelectionConfig { CharacterIndex = i, Difficulty = -1 };
                 __instance.CharacterSelectionConfig = configs;
-                Traverse.Create(__instance).Method("UpdateSkinSelectionArray", new[] { typeof(CharacterSelectionConfig[]) }).GetValue(configs);
+                Traverse.Create(__instance).Method("UpdateSkinSelectionArray", new[] { typeof(CharacterSelectionConfig[]) }).GetValue(new object[] { configs });
             }
             var teams = __instance.TeamSelectionIndeces;
             if (teams != null && teams.Length < EightPlayers.MaxPlayers)
@@ -209,6 +213,267 @@ namespace WandWarsMP.Sync
         {
             if (place > 4 && __instance.Place != null && __instance.Place.text == place.ToString())
                 __instance.Place.text = place + "th";
+        }
+    }
+
+    /// <summary>
+    /// Versus character select: 4 extra boxes cloned at load. They are shown (one row of 8, scaled) only
+    /// while an online session is active; offline keeps the game's 4-box screen untouched.
+    /// </summary>
+    [HarmonyPatch(typeof(CharacterSelection), "Awake")]
+    internal static class CharacterSelectAwakePatch
+    {
+        internal static CharacterSelectionBox[] All;
+        internal static CharacterSelection Panel;
+
+        private static void Prefix(CharacterSelection __instance)
+        {
+            if (__instance.GetType() != typeof(CharacterSelection)) return;
+            var existing = __instance.GetComponentsInChildren<CharacterSelectionBox>(true);
+            if (existing.Length != 4) return;
+            var template = existing[3];
+            int sibling = template.transform.GetSiblingIndex();
+            for (int i = 4; i < EightPlayers.MaxPlayers; i++)
+            {
+                var go = EightPlayers.CloneUnder(template.gameObject, template.transform.parent);
+                go.name = "character_box_wwmp" + i;
+                go.transform.SetSiblingIndex(++sibling);
+            }
+        }
+
+        private static void Postfix(CharacterSelection __instance)
+        {
+            if (__instance.GetType() != typeof(CharacterSelection)) return;
+            Panel = __instance;
+            All = Traverse.Create(__instance).Field("boxes").GetValue<CharacterSelectionBox[]>();
+            // First Enter activates the panel (and runs Awake) after Enter's prefix: configure here too.
+            CharacterSelectEnterPatch.Configure(__instance);
+        }
+    }
+
+    [HarmonyPatch(typeof(CharacterSelection), nameof(CharacterSelection.Enter))]
+    internal static class CharacterSelectEnterPatch
+    {
+        private static float? baseSpacing;
+
+        internal static bool EightActive => Net.NetSession.Instance != null && Net.NetSession.Instance.IsConnected;
+
+        private static void Prefix(CharacterSelection __instance)
+        {
+            UISettingsResizePatch.Ensure(Game.UISettings);
+            Configure(__instance);
+        }
+
+        internal static void Configure(CharacterSelection __instance)
+        {
+            if (__instance != CharacterSelectAwakePatch.Panel) return;
+            var all = CharacterSelectAwakePatch.All;
+            if (all == null || all.Length < EightPlayers.MaxPlayers) return;
+            int n = EightActive ? EightPlayers.MaxPlayers : 4;
+            var boxes = all.Take(n).ToArray();
+            var t = Traverse.Create(__instance);
+            t.Field("boxes").SetValue(boxes);
+            t.Field("modules").SetValue(boxes.Select(b => b.BotSelectionModule).ToArray());
+            for (int i = 0; i < all.Length; i++)
+            {
+                all[i].gameObject.SetActive(i < n);
+                all[i].transform.localScale = n > 4 ? new Vector3(0.56f, 0.56f, 1f) : Vector3.one;
+            }
+            var hlg = __instance.GetComponent<HorizontalLayoutGroup>();
+            if (hlg != null)
+            {
+                if (baseSpacing == null) baseSpacing = hlg.spacing;
+                hlg.spacing = n > 4 ? baseSpacing.Value * 0.5f : baseSpacing.Value;
+            }
+        }
+    }
+
+    /// <summary>Box i becomes player number i; boxes 4..7 must be players 5..8 (4 is "None").</summary>
+    [HarmonyPatch(typeof(CharacterSelection), "ProcessCharacterSelectionData")]
+    internal static class RenumberPlayersPatch
+    {
+        private static void Postfix(List<Player> __result)
+        {
+            foreach (var p in __result)
+                if ((int)p.PlayerNumber >= (int)PlayerNumber.None) p.PlayerNumber = (PlayerNumber)((int)p.PlayerNumber + 1);
+        }
+    }
+
+    /// <summary>Team select: CPU portraits exist for 4 slots; wrap them for 8.</summary>
+    [HarmonyPatch(typeof(TeamPanel), nameof(TeamPanel.Enter))]
+    internal static class TeamPanelPortraitsPatch
+    {
+        private static void Prefix(TeamPanel __instance)
+        {
+            UISettingsResizePatch.Ensure(Game.UISettings);
+            var src = __instance.CPUPortraits;
+            int n = GameLobby.Players?.Count ?? 0;
+            if (src == null || src.Length == 0 || src.Length >= n) return;
+            var arr = new Sprite[n];
+            for (int i = 0; i < n; i++) arr[i] = src[i % src.Length];
+            __instance.CPUPortraits = arr;
+        }
+    }
+
+    /// <summary>
+    /// Bot setup in character/team select starts its "first free slot" search at the hard-coded 3, which
+    /// would pick a human slot when the bots are in slots 5-8. Start at the last slot instead.
+    /// </summary>
+    [HarmonyPatch]
+    internal static class FirstSelectedIndexPatch
+    {
+                private static IEnumerable<System.Reflection.MethodBase> TargetMethods()
+        {
+            foreach (var type in new[] { typeof(CharacterSelection), typeof(TeamPanel) })
+            {
+                var iter = type.GetNestedTypes(AccessTools.all).FirstOrDefault(t => t.Name.Contains("Run") && typeof(System.Collections.IEnumerator).IsAssignableFrom(t));
+                if (iter != null) yield return AccessTools.Method(iter, "MoveNext");
+            }
+        }
+
+        private static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
+        {
+            var list = instructions.ToList();
+            for (int i = 0; i < list.Count - 1; i++)
+            {
+                if (list[i].opcode != System.Reflection.Emit.OpCodes.Ldc_I4_3) continue;
+                var next = list[i + 1];
+                if (next.opcode == System.Reflection.Emit.OpCodes.Stfld && next.operand is System.Reflection.FieldInfo f && f.Name.Contains("firstSelectedIndex"))
+                {
+                    list[i] = new CodeInstruction(System.Reflection.Emit.OpCodes.Call, AccessTools.Method(typeof(FirstSelectedIndexPatch), nameof(Start))).MoveLabelsFrom(list[i]);
+                    Plugin.Trace("EightPlayers: firstSelectedIndex patched in " + f.DeclaringType.Name);
+                }
+            }
+            return list;
+        }
+
+        private static int Start()
+        {
+            var cs = GameLobby.CurrentPanel;
+            if (cs is CharacterSelection)
+                return Mathf.Max(0, (Traverse.Create(cs).Field("boxes").GetValue<CharacterSelectionBox[]>()?.Length ?? 4) - 1);
+            if (cs is TeamPanel)
+                return Mathf.Max(0, (Traverse.Create(cs).Field("boxes").GetValue<List<TeamSelectionBox>>()?.Count ?? 4) - 1);
+            return 3;
+        }
+    }
+
+    /// <summary>Eggnarok above 4 players: King of the Coop (one zone per player) is left out.</summary>
+    [HarmonyPatch(typeof(Eggnarok), MethodType.Constructor, new[] { typeof(string), typeof(List<Player>), typeof(MatchConfig) })]
+    internal static class EggnarokRosterPatch
+    {
+        private static object fullList;
+
+        private static void Prefix(List<Player> playerList)
+        {
+            var field = Traverse.Create(typeof(Eggnarok)).Field("possibleMatches");
+            var list = field.GetValue() as System.Collections.IList;
+            if (list == null) return;
+            if (fullList == null) fullList = list;
+            var full = (System.Collections.IList)fullList;
+            if (playerList.Count <= 4) { field.SetValue(full); return; }
+            var filtered = (System.Collections.IList)System.Activator.CreateInstance(full.GetType());
+            foreach (var m in full)
+                if ((MatchType)Traverse.Create(m).Field("MatchTypeEnum").GetValue() != MatchType.KingOfTheCoop) filtered.Add(m);
+            field.SetValue(filtered);
+        }
+    }
+
+    /// <summary>Medley above 4 players: skip King of the Coop inside its Eggnarok slot (advance past it).</summary>
+    [HarmonyPatch(typeof(Medley), "AllowMatchGivenPlayers")]
+    internal static class MedleyRosterPatch
+    {
+        private static void Postfix(List<Player> players, object matchInfo, ref bool __result)
+        {
+            if (!__result || players.Count <= 4) return;
+            var t = Traverse.Create(matchInfo);
+            if ((MatchType)t.Property("MatchTypeEnum").GetValue() != MatchType.KingOfTheCoop) return;
+            t.Method("OnMatchUsed").GetValue();
+            __result = false;
+        }
+    }
+
+    /// <summary>
+    /// Hexout / Hen Hunt HUD prefabs hold 4 modules indexed by player number. Above 4 players the match
+    /// instantiates an expanded runtime copy instead (kept under an inactive holder so it never shows).
+    /// </summary>
+    [HarmonyPatch]
+    internal static class ModeHudPrefabPatch
+    {
+        private static readonly Dictionary<string, HexoutHud> originals = new Dictionary<string, HexoutHud>();
+        private static readonly Dictionary<string, HexoutHud> expanded = new Dictionary<string, HexoutHud>();
+        private static GameObject holder;
+
+        private static IEnumerable<System.Reflection.MethodBase> TargetMethods()
+        {
+            yield return AccessTools.Method(typeof(HexOut), nameof(HexOut.Start));
+            yield return AccessTools.Method(typeof(HenHunt), nameof(HenHunt.Start));
+        }
+
+        private static void Prefix(MatchBase __instance)
+        {
+            bool big = EightPlayers.MaxNumber(__instance.Players) >= 4;
+            Swap("HexoutHudPrefab", big);
+            Swap("HenHuntHudPrefab", big);
+        }
+
+        private static void Swap(string field, bool big)
+        {
+            var gr = Game.GlobalResources;
+            var f = Traverse.Create(gr).Field(field);
+            var current = f.GetValue<HexoutHud>();
+            if (current == null) return;
+            if (!originals.ContainsKey(field)) originals[field] = current;
+            var original = originals[field];
+            if (!big) { f.SetValue(original); return; }
+            if (!expanded.TryGetValue(field, out var big9) || big9 == null)
+            {
+                if (holder == null)
+                {
+                    holder = new GameObject("wwmp_hud_templates");
+                    holder.SetActive(false);
+                    Object.DontDestroyOnLoad(holder);
+                }
+                big9 = Object.Instantiate(original);
+                big9.transform.SetParent(holder.transform, false);
+                var modules = big9.Modules.ToList();
+                int baseCount = modules.Count;
+                while (modules.Count < EightPlayers.MaxPlayers + 1)
+                {
+                    // Index 4 is the unused dummy; players 5-8 sit beside the corners of players 1-4.
+                    int idx = modules.Count;
+                    var template = modules[idx == 4 ? baseCount - 1 : (idx - 5) % baseCount];
+                    var go = EightPlayers.CloneUnder(template.gameObject, template.transform.parent);
+                    go.name = template.name + "_wwmp" + idx;
+                    var rt = go.transform as RectTransform;
+                    var parentRt = template.transform.parent as RectTransform;
+                    if (idx > 4 && rt != null)
+                    {
+                        float width = parentRt != null && parentRt.rect.width > 0 ? parentRt.rect.width : 480f;
+                        float dir = rt.anchorMin.x < 0.5f ? 1f : -1f;
+                        rt.anchoredPosition += new Vector2(dir * width * 0.2f, 0f);
+                    }
+                    go.SetActive(false); // SetScoreProvider activates the ones in use
+                    modules.Add(go.GetComponent<HUDModule>());
+                }
+                big9.Modules = modules.ToArray();
+                expanded[field] = big9;
+                Plugin.Trace($"EightPlayers: {field} expanded to {modules.Count} modules");
+            }
+            f.SetValue(big9);
+        }
+    }
+
+    /// <summary>Versus intro: the portrait strip fits ~4 players; shrink it for more.</summary>
+    [HarmonyPatch(typeof(VersusScreen), nameof(VersusScreen.Prepare))]
+    internal static class VersusScreenScalePatch
+    {
+        private static void Postfix(VersusScreen __instance, MatchBase match)
+        {
+            if (__instance.Container == null) return;
+            int n = match.Players.Count;
+            float s = n > 4 ? Mathf.Min(1f, 8.5f / (2 * n - 1)) : 1f;
+            __instance.Container.localScale = new Vector3(s, s, 1f);
         }
     }
 }

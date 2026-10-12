@@ -259,6 +259,13 @@ namespace WandWarsMP.Net
                 return;
             }
             if (Remotes.ContainsKey(peer)) return;
+            if (Remotes.Count >= Sync.EightPlayers.MaxPlayers - 1)
+            {
+                var m = Begin(Msg.Reject);
+                m.Str($"lobby is full ({Sync.EightPlayers.MaxPlayers} players)");
+                SendTo(peer, m, true);
+                return;
+            }
 
             byte slot = 1;
             while (SlotTaken(slot)) slot++;

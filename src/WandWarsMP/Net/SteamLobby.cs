@@ -11,7 +11,7 @@ namespace WandWarsMP.Net
     public sealed class SteamLobby
     {
         public const string KeyMod = "wwmp";
-        public const int MaxMembers = 4;
+        public const int MaxMembers = Sync.EightPlayers.MaxPlayers;
 
         public static SteamLobby Instance { get; private set; }
 

@@ -220,11 +220,14 @@ namespace WandWarsMP.Dev
             var net = Net.NetSession.Ensure();
             net.StartHost(int.Parse(Get("port", Net.Protocol.DefaultPort.ToString())));
             float deadline = Time.realtimeSinceStartup + float.Parse(Get("seconds", "240"));
-            while (net.Remotes.Count == 0 && Time.realtimeSinceStartup < deadline) yield return null;
+            int wantRemotes = int.Parse(Get("remotes", "1"));
+            while (net.Remotes.Count < wantRemotes && Time.realtimeSinceStartup < deadline) yield return null;
             yield return new WaitForSeconds(2f);
             Shot("h1_hosting");
             yield return null;
             UI.NativeOnlineMenu.Instance.StartVersus();
+            float csWait = Time.realtimeSinceStartup + 10f;
+            while (!(GameLobby.CurrentPanel is CharacterSelection) && Time.realtimeSinceStartup < csWait) yield return null;
             yield return new WaitForSeconds(float.Parse(Get("confirmdelay", "2")));
             // Stand-in for the host pressing confirm on their own box.
             var cs = GameLobby.CurrentPanel as CharacterSelection;
@@ -232,6 +235,13 @@ namespace WandWarsMP.Dev
             {
                 var boxes = HarmonyLib.Traverse.Create(cs).Field("boxes").GetValue<CharacterSelectionBox[]>();
                 boxes[0].SetState(CharacterSelectionBox.SelectionState.Confirmed);
+                // bots=N: fill the boxes after the humans with N CPU players.
+                int bots = int.Parse(Get("bots", "0"));
+                for (int i = net.Remotes.Count + 1; i < boxes.Length && bots > 0; i++, bots--)
+                {
+                    boxes[i].SelectionConfig.Difficulty = 1;
+                    boxes[i].SetState(CharacterSelectionBox.SelectionState.Confirmed);
+                }
                 Plugin.Trace("DevHarness: host confirmed own box; boxes=" + string.Join(",", boxes.Select(b => b.State + ":" + (b.Device != null ? b.Device.Name : "-")).ToArray()));
             }
             string last = null;
@@ -318,6 +328,18 @@ namespace WandWarsMP.Dev
             UI.NativeOnlineMenu.Instance.StartVersus();
             yield return new WaitForSeconds(2.5f);
             Shot("4_charselect");
+            yield return new WaitForSeconds(5f);
+            Shot("4_charselect_b");
+            var csp = GameLobby.CurrentPanel;
+            if (csp != null)
+            {
+                var sb = new StringBuilder();
+                for (var t = csp.transform; t != null; t = t.parent)
+                    sb.Append(t.name).Append(" scale=").Append(t.localScale).Append(" pos=").Append(t.localPosition).AppendLine();
+                DumpTree(csp.transform, 0, sb);
+                File.WriteAllText(Path.Combine(Paths.BepInExRootPath, "wwmp_charselect.txt"), sb.ToString());
+            }
+            yield return new WaitForSeconds(1f);
         }
 
         internal static void Shot(string name)
@@ -378,6 +400,7 @@ namespace WandWarsMP.Dev
         {
             float end = Time.realtimeSinceStartup + seconds, nextShot = Time.realtimeSinceStartup + 12f;
             int n = 0, hudShots = 0;
+            StartCoroutine(DelayedShot("watch_vs", 2.5f));
             while (Time.realtimeSinceStartup < end)
             {
                 var mb = Game.Match;

@@ -405,13 +405,29 @@ namespace WandWarsMP.Sync
     {
         public static readonly string[] Supported = { "arcane arena", "team arena", "merlinball", "hexout", "team hexout", "last hen standing", "hen hunt", "king of the coop", "eggnarok", "medley", "spellstorm" };
 
+        private static readonly System.Collections.Generic.List<MenuButton> disabled = new System.Collections.Generic.List<MenuButton>();
+
         private static void Postfix(WandWars.ModeSelectPanel __instance)
         {
-            if (!MatchSync.IsHost) return;
             var c = __instance.ModeCarousel;
+            // Undo the previous visit's filtering (a disabled button stays out of the carousel otherwise).
+            if (disabled.Count > 0)
+            {
+                foreach (var b in disabled) if (b != null) c.EnableButton(b);
+                disabled.Clear();
+                c.Buttons.Sort((a, b) => a.transform.GetSiblingIndex().CompareTo(b.transform.GetSiblingIndex()));
+            }
+            bool online = MatchSync.IsHost;
+            int players = GameLobby.Players != null ? GameLobby.Players.Count : 0;
             foreach (var b in new System.Collections.Generic.List<MenuButton>(c.Buttons))
-                if (b.ButtonText != null && System.Array.IndexOf(Supported, b.ButtonText.text.Trim().ToLower()) < 0)
-                    c.DisableButton(b);
+            {
+                if (b.ButtonText == null) continue;
+                string name = b.ButtonText.text.Trim().ToLower();
+                bool off = (online && System.Array.IndexOf(Supported, name) < 0)
+                    // 4-player layouts: King of the Coop (one hold zone per player), Spellstorm (co-op HUD).
+                    || (players > 4 && (name == "king of the coop" || name == "spellstorm" || name == "reverse spellstorm"));
+                if (off) { c.DisableButton(b); disabled.Add(b); }
+            }
         }
     }
 }
