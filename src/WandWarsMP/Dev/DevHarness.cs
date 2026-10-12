@@ -130,12 +130,15 @@ namespace WandWarsMP.Dev
         {
             var net = Net.NetSession.Ensure();
             net.StartHost(int.Parse(Get("port", Net.Protocol.DefaultPort.ToString())));
-            float deadline = Time.realtimeSinceStartup + 30f;
-            while (net.Remotes.Count == 0 && Time.realtimeSinceStartup < deadline) yield return null;
+            int needed = int.Parse(Get("remotes", "1"));
+            float deadline = Time.realtimeSinceStartup + 45f;
+            while (net.Remotes.Count < needed && Time.realtimeSinceStartup < deadline) yield return null;
             if (net.Remotes.Count == 0) { Plugin.Trace("DevHarness: no client joined"); yield break; }
+            Plugin.Trace($"DevHarness: {net.Remotes.Count} client(s) joined");
 
-            var remote = net.Remotes.Values.First();
-            yield return StartCoroutine(StartBotMatch(int.Parse(Get("players", "2")), new List<InControl.InputDevice> { remote.Device }));
+            var remote = net.Remotes.Values.OrderBy(r => r.Slot).First();
+            var humans = net.Remotes.Values.OrderBy(r => r.Slot).Select(r => (InControl.InputDevice)r.Device).ToList();
+            yield return StartCoroutine(StartBotMatch(int.Parse(Get("players", "2")), humans));
             var match = (MatchBase)Game.State;
             Player p = match.Players.First(x => x.InputDevice == remote.Device);
 
