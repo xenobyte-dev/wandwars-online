@@ -463,6 +463,12 @@ namespace WandWarsMP.Sync
         internal bool ClientRoundOver(int round) => roundsOver.Contains(round);
         internal bool HasRoundWinner(int round) => roundWinners.ContainsKey(round);
 
+        internal void HostAbortMatch()
+        {
+            net.Broadcast(net.Begin(Msg.MatchAbort), true);
+            Plugin.Trace("Sync[H]: match ended early by host");
+        }
+
         internal void HostOnPostMatch()
         {
             net.Broadcast(net.Begin(Msg.PostMatch), true);
@@ -516,6 +522,10 @@ namespace WandWarsMP.Sync
                 case Msg.Hex: OnHex(ref r); break;
                 case Msg.RoundWinner: OnRoundWinner(ref r); break;
                 case Msg.PostMatch: ClientLeaveScoreScreen(); break;
+                case Msg.MatchAbort:
+                    Plugin.Trace("Sync[C]: host ended the match");
+                    if (Game.Match != null) Game.Match.QuitToMainMenu();
+                    break;
                 case Msg.ItemSpawn: OnItemSpawn(ref r); break;
                 case Msg.ItemDespawn: OnItemDespawn(ref r); break;
                 case Msg.ItemPickup: OnItemPickup(ref r); break;

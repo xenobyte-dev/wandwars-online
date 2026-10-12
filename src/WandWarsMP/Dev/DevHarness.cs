@@ -150,6 +150,15 @@ namespace WandWarsMP.Dev
                 Plugin.Trace($"DevHarness: host round={match.RoundNumber} rtt={Net.NetSession.Instance.GetRtt(remote.Peer):F1}ms {ents}");
             }
             Plugin.Trace($"DevHarness: RESULT remote max displacement {maxDist:F2}, hexes cast {p.HexesCast}");
+            if (Get("abort", "false") == "true")
+            {
+                Sync.MatchSync.Instance.HostAbortMatch();
+                Game.Match.QuitToMainMenu();
+                float t = Time.realtimeSinceStartup + 15f;
+                while (!(Game.State is GameLobby) && Time.realtimeSinceStartup < t) yield return null;
+                Plugin.Trace("DevHarness: RESULT host state after abort: " + StateName());
+                yield return new WaitForSeconds(3f);
+            }
         }
 
         /// <summary>Screenshot(s) + hierarchy dump of the lobby scene UI, for building native menus.</summary>
@@ -331,7 +340,7 @@ namespace WandWarsMP.Dev
                     (p.PrimaryEntity != null ? $"P{(int)p.PlayerNumber + 1}{(Vector2)p.PrimaryEntity.transform.position}" : $"P{(int)p.PlayerNumber + 1}-") + $"[{p.Score.Value}]").ToArray());
                 Plugin.Trace($"DevHarness: client round={Game.Match.RoundNumber} rtt={net.HostRttMs:F0} avgCorr={sync.AvgCorrection:F3} ownCorr={sync.OwnAvgCorrection:F3} align[-2..3]={string.Join("/", sync.AlignErr.Select(x => x.ToString("F2")).ToArray())} snaps={sync.Snaps} {ents}");
             }
-            Plugin.Trace($"DevHarness: client done, status={net.Status} rtt={net.HostRttMs:F1}ms");
+            Plugin.Trace($"DevHarness: client done, status={net.Status} rtt={net.HostRttMs:F1}ms state={StateName()}");
         }
 
         private IEnumerator Census(float seconds)

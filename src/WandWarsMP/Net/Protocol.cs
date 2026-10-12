@@ -32,6 +32,7 @@ namespace WandWarsMP.Net
         ItemSpawn = 37,     // u16 id, str powerupName, vec2 pos
         ItemDespawn = 38,   // u16 id
         ItemPickup = 39,    // u8 player, u16 item
+        MatchAbort = 43,    // host ended the match early: everyone back to the menu
         PostMatch = 36,     // host left the score screen: everyone back to the lobby
 
         // lobby
@@ -43,7 +44,7 @@ namespace WandWarsMP.Net
     public static class Protocol
     {
         /// <summary>Bump on any wire-format change. Peers with different values refuse each other.</summary>
-        public const ushort Version = 4;
+        public const ushort Version = 5;
         public const int DefaultPort = 27420;
     }
 }

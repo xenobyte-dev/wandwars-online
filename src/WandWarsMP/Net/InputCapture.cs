@@ -56,6 +56,7 @@ namespace WandWarsMP.Net
                 move = actions.Move.Vector;
             }
 
+            if (Sync.OnlineMatchMenu.Open) { buttons = 0; move = Vector2.zero; } // menu open: wizard idles
             move = Vector2.ClampMagnitude(move, 1f);
             return new InputState
             {
