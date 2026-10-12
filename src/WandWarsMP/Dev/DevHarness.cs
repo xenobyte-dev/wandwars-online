@@ -232,7 +232,19 @@ namespace WandWarsMP.Dev
             while (Time.realtimeSinceStartup < deadline)
             {
                 string cur = Game.State is GameLobby ? (GameLobby.CurrentPanel != null ? GameLobby.CurrentPanel.name : "?") : StateName();
-                if (cur != last) { last = cur; Plugin.Trace("DevHarness: host at " + cur); Shot("h_" + cur); }
+                if (cur != last)
+                {
+                    last = cur;
+                    Plugin.Trace("DevHarness: host at " + cur);
+                    Shot("h_" + cur);
+                    if (GameLobby.CurrentPanel is ModeSelectPanel ms)
+                    {
+                        string want = Get("modename", "arcane arena");
+                        var b = ms.ModeCarousel.Buttons.FirstOrDefault(x => x.ButtonText != null && x.ButtonText.text.Trim().ToLower() == want);
+                        if (b != null) ms.ModeCarousel.SetItem(b);
+                        Plugin.Trace("DevHarness: host mode -> " + (b != null ? want : "not found: " + want));
+                    }
+                }
                 if (Game.State is MatchBase mb && mb.MatchState == MatchState.ScoreScreen) break;
                 yield return null;
             }
