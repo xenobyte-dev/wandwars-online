@@ -81,10 +81,11 @@ namespace WandWarsMP.Sync
 
         // ---- respawns ----
 
-        internal void HostOnRespawn(MatchBase match, Player player, bool spawnBall, bool activateImmunity)
+        internal void HostOnRespawn(MatchBase match, Player player, PlayerSpawnPoint given, bool spawnBall, bool activateImmunity)
         {
             var spawn = match.PlayerSpawn;
-            int idx = spawn != null && spawn.LastUsedSpawnPoint != null ? System.Array.IndexOf(spawn.SpawnPoints, spawn.LastUsedSpawnPoint) : -1;
+            var point = given != null ? given : (spawn != null ? spawn.LastUsedSpawnPoint : null);
+            int idx = spawn != null && point != null ? System.Array.IndexOf(spawn.SpawnPoints, point) : -1;
             if (idx < 0) return;
             var w = net.Begin(Msg.Respawn);
             w.U8((byte)player.PlayerNumber);
@@ -106,7 +107,37 @@ namespace WandWarsMP.Sync
         }
     }
 
-    /// <summary>All SpawnCharacter implementations (base + Hexout overrides).</summary>
+    /// <summary>
+    /// Marks code running inside a round's spawn sequence (any mode's Spawn coroutine). SpawnCharacter
+    /// calls outside it are mid-round respawns: host-decided, replayed on clients.
+    /// </summary>
+    [HarmonyPatch]
+    internal static class RoundSpawnScopePatch
+    {
+        internal static int Depth;
+
+        private static IEnumerable<System.Reflection.MethodBase> TargetMethods() => RoundMethods.All("Spawn");
+
+        private static void Postfix(ref System.Collections.IEnumerator __result)
+        {
+            if (MatchSync.Online && __result != null) __result = Scoped(__result);
+        }
+
+        private static System.Collections.IEnumerator Scoped(System.Collections.IEnumerator inner)
+        {
+            while (true)
+            {
+                bool more;
+                Depth++;
+                try { more = inner.MoveNext(); }
+                finally { Depth--; }
+                if (!more) yield break;
+                yield return inner.Current;
+            }
+        }
+    }
+
+    /// <summary>All SpawnCharacter implementations (base + mode overrides).</summary>
     [HarmonyPatch]
     internal static class SpawnCharacterPatch
     {
@@ -114,11 +145,13 @@ namespace WandWarsMP.Sync
 
         private static IEnumerable<System.Reflection.MethodBase> TargetMethods() => RoundMethods.All("SpawnCharacter");
 
-        private static bool Prefix(PlayerSpawnPoint spawnPoint, out bool __state)
+        private static bool IsRespawn => RoundSpawnScopePatch.Depth == 0 && Game.Match != null;
+
+        private static bool Prefix(out bool __state)
         {
             __state = depth++ == 0;
-            // Client: random-point respawns come from the host instead.
-            if (__state && spawnPoint == null && MatchSync.IsClient && Game.Match != null && !Replay.Active)
+            // Client: mid-round respawns come from the host instead.
+            if (__state && IsRespawn && MatchSync.IsClient && !Replay.Active)
             {
                 depth--;
                 __state = false;
@@ -131,8 +164,8 @@ namespace WandWarsMP.Sync
         {
             if (!__runOriginal) return;
             depth--;
-            if (__state && spawnPoint == null && MatchSync.IsHost && Game.Match != null)
-                MatchSync.Instance.HostOnRespawn(__instance, player, spawnBall, activateImmunity);
+            if (__state && IsRespawn && MatchSync.IsHost)
+                MatchSync.Instance.HostOnRespawn(__instance, player, spawnPoint, spawnBall, activateImmunity);
         }
     }
 

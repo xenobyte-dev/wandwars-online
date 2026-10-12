@@ -49,6 +49,7 @@ namespace WandWarsMP.Sync
             ballsById.Clear();
             roundWinners.Clear();
             roundsOver.Clear();
+            tauntsDone.Clear();
             fastForwardRound = -1;
             roundsAwaitingScore.Clear();
             hostRoundOverSent = -1;
@@ -578,6 +579,26 @@ namespace WandWarsMP.Sync
 
         internal bool ClientRoundOver(int round) => roundsOver.Contains(round);
 
+        private readonly HashSet<int> tauntsDone = new HashSet<int>();
+        internal bool TauntDone(int round) => tauntsDone.Contains(round);
+
+        internal void HostOnTaunt(GameEntity e)
+        {
+            byte num = PlayerNum(e);
+            if (num == NoPlayer) return;
+            var w = net.Begin(Msg.TauntPlay);
+            w.U8(num);
+            net.Broadcast(w, true);
+        }
+
+        internal void HostOnTauntDone(int round)
+        {
+            Plugin.Trace($"Sync[H]: taunt done round {round}");
+            var w = net.Begin(Msg.TauntDone);
+            w.U8((byte)round);
+            net.Broadcast(w, true);
+        }
+
         private int fastForwardRound = -1;
 
         internal bool ClientFastForward(int round) => fastForwardRound == round;
@@ -711,6 +732,20 @@ namespace WandWarsMP.Sync
                 case Msg.EntityDespawn: OnEntityDespawn(ref r); break;
                 case Msg.EntityDeath: OnEntityDeath(ref r); break;
                 case Msg.Beast: OnBeast(ref r); break;
+                case Msg.SubMatch: OnSubMatch(ref r); break;
+                case Msg.TauntDone:
+                {
+                    int tr = r.U8();
+                    tauntsDone.Add(tr);
+                    Plugin.Trace($"Sync[C]: host taunt done round {tr}");
+                    break;
+                }
+                case Msg.TauntPlay:
+                {
+                    var pc = EntityOf(r.U8());
+                    if (pc != null && pc.isActiveAndEnabled) using (Replay.Begin()) pc.Taunt();
+                    break;
+                }
                 case Msg.RefereeLine: RefereeLinePatch.PendingLine = r.Str(); break;
                 case Msg.MatchAbort:
                     Plugin.Trace("Sync[C]: host ended the match");
