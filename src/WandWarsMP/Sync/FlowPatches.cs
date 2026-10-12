@@ -63,3 +63,18 @@ namespace WandWarsMP.Sync
         }
     }
 }
+
+namespace WandWarsMP.Sync
+{
+    /// <summary>Diagnostics: when each side starts a round's spawn sequence.</summary>
+    [HarmonyLib.HarmonyPatch]
+    internal static class RoundStartTracePatch
+    {
+        private static System.Collections.Generic.IEnumerable<System.Reflection.MethodBase> TargetMethods() => RoundMethods.All("RunBeforeRound");
+
+        private static void Prefix(WandWars.MatchBase __instance)
+        {
+            if (MatchSync.Online) Plugin.Trace($"Sync[{(MatchSync.IsHost ? "H" : "C")}]: round {__instance.RoundNumber + 1} begins");
+        }
+    }
+}

@@ -84,6 +84,17 @@ namespace WandWarsMP.Net
 
         public int Remaining => end - Pos;
 
+        /// <summary>Copy of the unread bytes (to re-read the rest of this message later).</summary>
+        public byte[] RemainingCopy()
+        {
+            var b = new byte[end - Pos];
+            System.Buffer.BlockCopy(data, Pos, b, 0, b.Length);
+            return b;
+        }
+
+        /// <summary>Peek the next byte without consuming it.</summary>
+        public byte PeekU8() { Need(1); return data[Pos]; }
+
         private void Need(int n)
         {
             if (Pos + n > end) throw new IndexOutOfRangeException("NetReader overrun");

@@ -49,10 +49,12 @@ namespace WandWarsMP.Sync
             ballsById.Clear();
             roundWinners.Clear();
             roundsOver.Clear();
+            fastForwardRound = -1;
             roundsAwaitingScore.Clear();
             hostRoundOverSent = -1;
             nextBallId = 1;
             DamageDepth = 0;
+            deferred.Clear();
         }
 
         // ================= balls (host) =================
@@ -351,10 +353,9 @@ namespace WandWarsMP.Sync
             return target.gameObject; // no credit (suicide-like), same as the game for unknown sources
         }
 
-        internal void HostOnDamage(GameEntity target, int amount, GameObject src, int preHealth, bool died)
+        internal void HostOnDamage(GameEntity target, byte num, int amount, GameObject src, int preHealth, bool died)
         {
             if (src != null && src.GetComponent<Ball>() != null) HostBallId(src.GetComponent<Ball>());
-            byte num = PlayerNum(target);
             Plugin.Trace($"Sync[H]: damage P{num + 1} amt={amount} src={(src != null ? src.name : "null")} pre={preHealth} died={died}");
             if (num == NoPlayer) return;
             var w = net.Begin(Msg.Damage);
@@ -383,9 +384,15 @@ namespace WandWarsMP.Sync
 
         private void OnDamage(ref NetReader r)
         {
-            var pc = ActorOf(r.U8());
+            byte targetNum = r.U8();
+            var pc = ActorOf(targetNum);
             int amount = r.U8();
-            if (pc == null) { r.U8(); r.U16(); return; }
+            if (pc == null)
+            {
+                var pl = PlayerOf(targetNum);
+                Plugin.Trace($"Sync[C]: damage for P{targetNum + 1} has no local entity (entities={pl?.Entities.Count ?? -1}, primary={(pl?.PrimaryEntity != null ? pl.PrimaryEntity.name : "null")})");
+                r.U8(); r.U16(); return;
+            }
             var src = ReadSource(ref r, pc);
             int preHealth = r.U8();
             bool died = r.Bool();
@@ -439,6 +446,56 @@ namespace WandWarsMP.Sync
             if (best == null) return;
             best.transform.position = pos;
             using (Replay.Begin()) best.SetState(ArcaneShot.ArcaneShotState.Dead);
+        }
+
+        // ================= deferred events =================
+
+        private struct Deferred
+        {
+            public Msg Msg;
+            public byte[] Data;
+            public float Until;
+        }
+
+        private readonly List<Deferred> deferred = new List<Deferred>();
+        private const float DeferSeconds = 3f;
+
+        private void Defer(Msg msg, byte[] data)
+        {
+            deferred.Add(new Deferred { Msg = msg, Data = data, Until = Time.realtimeSinceStartup + DeferSeconds });
+        }
+
+        private void Dispatch(Msg msg, ref NetReader r)
+        {
+            switch (msg)
+            {
+                case Msg.Damage: OnDamage(ref r); break;
+                case Msg.Death: OnDeath(ref r); break;
+                case Msg.Hex: OnHex(ref r); break;
+            }
+        }
+
+        /// <summary>Client, every frame: replay deferred events whose target now exists (in order).</summary>
+        private void PumpDeferred()
+        {
+            if (deferred.Count == 0) return;
+            float now = Time.realtimeSinceStartup;
+            for (int i = 0; i < deferred.Count; i++)
+            {
+                var d = deferred[i];
+                var r = new NetReader(d.Data, 0, d.Data.Length);
+                if (ActorOf(r.PeekU8()) != null)
+                {
+                    try { Dispatch(d.Msg, ref r); }
+                    catch (System.Exception e) { Plugin.Log.LogWarning("Sync: deferred event failed: " + e); }
+                    deferred.RemoveAt(i--);
+                }
+                else if (now > d.Until)
+                {
+                    Plugin.Trace($"Sync[C]: dropped {d.Msg} for P{d.Data[0] + 1} (never spawned locally)");
+                    deferred.RemoveAt(i--);
+                }
+            }
         }
 
         // ================= hex =================
@@ -520,6 +577,19 @@ namespace WandWarsMP.Sync
         }
 
         internal bool ClientRoundOver(int round) => roundsOver.Contains(round);
+
+        private int fastForwardRound = -1;
+
+        internal bool ClientFastForward(int round) => fastForwardRound == round;
+
+        internal void HostOnFastForward(MatchBase match)
+        {
+            hostRoundOverSent = match.RoundNumber; // FF replaces the RoundOver signal for this round
+            var w = net.Begin(Msg.FastForward);
+            w.U8((byte)match.RoundNumber);
+            net.Broadcast(w, true);
+            Plugin.Trace($"Sync[H]: round {match.RoundNumber} fast-forwarded");
+        }
         internal bool HasRoundWinner(int round) => roundWinners.ContainsKey(round);
 
         internal void HostAbortMatch()
@@ -623,9 +693,13 @@ namespace WandWarsMP.Sync
                 case Msg.Catch: OnCatch(ref r); break;
                 case Msg.Launch: OnLaunch(ref r); break;
                 case Msg.Release: OnRelease(ref r); break;
-                case Msg.Damage: OnDamage(ref r); break;
-                case Msg.Death: OnDeath(ref r); break;
-                case Msg.Hex: OnHex(ref r); break;
+                case Msg.Damage:
+                case Msg.Death:
+                case Msg.Hex:
+                    // Target may not exist locally yet (we spawn a moment after the host): retry shortly.
+                    if (ActorOf(r.PeekU8()) == null) Defer(msg, r.RemainingCopy());
+                    else Dispatch(msg, ref r);
+                    break;
                 case Msg.RoundWinner: OnRoundWinner(ref r); break;
                 case Msg.PostMatch: ClientLeaveScoreScreen(); break;
                 case Msg.Goal: OnGoal(ref r); break;
@@ -637,6 +711,7 @@ namespace WandWarsMP.Sync
                 case Msg.EntityDespawn: OnEntityDespawn(ref r); break;
                 case Msg.EntityDeath: OnEntityDeath(ref r); break;
                 case Msg.Beast: OnBeast(ref r); break;
+                case Msg.RefereeLine: RefereeLinePatch.PendingLine = r.Str(); break;
                 case Msg.MatchAbort:
                     Plugin.Trace("Sync[C]: host ended the match");
                     if (Game.Match != null) Game.Match.QuitToMainMenu();
@@ -644,6 +719,10 @@ namespace WandWarsMP.Sync
                 case Msg.ItemSpawn: OnItemSpawn(ref r); break;
                 case Msg.ItemDespawn: OnItemDespawn(ref r); break;
                 case Msg.ItemPickup: OnItemPickup(ref r); break;
+                case Msg.FastForward:
+                    fastForwardRound = r.U8();
+                    ForcedSkipPressPatch.Pending = true;
+                    break;
                 case Msg.RoundOver:
                     roundsOver.Add(r.U8());
                     break;

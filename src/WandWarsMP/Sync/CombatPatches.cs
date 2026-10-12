@@ -117,20 +117,23 @@ namespace WandWarsMP.Sync
     [HarmonyPatch(typeof(GameEntity), nameof(GameEntity.TakeDamage))]
     internal static class TakeDamagePatch
     {
-        private static bool Prefix(GameEntity __instance, ref bool __result, out int __state)
+        internal struct State { public int Health; public byte Num; }
+
+        private static bool Prefix(GameEntity __instance, ref bool __result, out State __state)
         {
-            __state = __instance.Health;
+            // Resolve the player before the hit runs: a lethal hit removes the entity from its player.
+            __state = new State { Health = __instance.Health, Num = MatchSync.PlayerNum(__instance) };
             if (Authority.BlockLocal) { __result = false; return false; }
             if (Authority.HostSending) MatchSync.DamageDepth++;
             return true;
         }
 
-        private static void Postfix(GameEntity __instance, int amount, GameObject damageSource, bool __result, int __state)
+        private static void Postfix(GameEntity __instance, int amount, GameObject damageSource, bool __result, State __state)
         {
             if (!Authority.HostSending) return;
             MatchSync.DamageDepth--;
             if (__result)
-                MatchSync.Instance.HostOnDamage(__instance, amount, damageSource, __state, __instance.Health <= 0);
+                MatchSync.Instance.HostOnDamage(__instance, __state.Num, amount, damageSource, __state.Health, __instance.Health <= 0);
         }
     }
 
@@ -226,20 +229,86 @@ namespace WandWarsMP.Sync
         }
     }
 
-    /// <summary>Host's fast-forward (all humans dead, skip pressed) ends the round too.</summary>
+    /// <summary>
+    /// Fast-forward (all humans dead, skip pressed): the host signals it so clients take the game's own
+    /// short path too (otherwise they run the long round-end sequence and fall seconds behind).
+    /// </summary>
     [HarmonyPatch]
     internal static class FastForwardWinnerPatch
     {
         private static IEnumerable<System.Reflection.MethodBase> TargetMethods() => RoundMethods.All("FindFastForwardRoundWinner");
 
-        private static void Prefix(out bool __state) => __state = RoundMethods.WinnerDepth++ == 0;
+        private static bool Prefix(MatchBase __instance, ref IScoreProvider __result, out bool __state)
+        {
+            __state = RoundMethods.WinnerDepth++ == 0;
+            if (!MatchSync.IsClient || !__state) return true;
+            var d = MatchSync.Instance.TakeRoundWinner(__instance.RoundNumber);
+            if (d == null) return true;
+            MatchSync.ApplyScores(d);
+            __result = MatchSync.ResolveWinner(d);
+            return false;
+        }
 
         private static void Postfix(MatchBase __instance, IScoreProvider __result, bool __state)
         {
             RoundMethods.WinnerDepth--;
             if (!__state || !MatchSync.IsHost) return;
-            MatchSync.Instance.HostOnRoundOver(__instance);
+            MatchSync.Instance.HostOnFastForward(__instance);
             MatchSync.Instance.HostOnRoundWinner(__instance, __result);
+        }
+    }
+
+    /// <summary>Client: one synthetic press of the skip button when the host fast-forwarded.</summary>
+    [HarmonyPatch(typeof(InControl.OneAxisInputControl), nameof(InControl.OneAxisInputControl.WasPressed), MethodType.Getter)]
+    internal static class ForcedSkipPressPatch
+    {
+        /// <summary>Host fast-forwarded this round (set on receipt).</summary>
+        internal static bool Pending;
+        /// <summary>The game's skip prompt is up: the next Action1 check is the skip loop's.</summary>
+        internal static bool Armed;
+
+        /// <summary>True if the code reading the button is RunRound's own skip loop (not Tick's checks).</summary>
+        private static bool DirectCallerIsRunRound()
+        {
+            var frames = new System.Diagnostics.StackTrace().GetFrames();
+            if (frames == null) return false;
+            foreach (var f in frames)
+            {
+                var m = f.GetMethod();
+                if (m == null) continue;
+                string n = m.Name;
+                var t = m.DeclaringType;
+                if (t == typeof(ForcedSkipPressPatch) || n.Contains("WasPressed") || n.Contains("Postfix")) continue;
+                // First real caller: RunRound's iterator MoveNext.
+                return t != null && t.Name.Contains("RunRound");
+            }
+            return false;
+        }
+
+        private static void Postfix(InControl.OneAxisInputControl __instance, ref bool __result)
+        {
+            if (!MatchSync.IsClient || Game.Match == null) return;
+            if (!(__result || (Pending && Armed))) return;
+            if (__instance != InControl.InputManager.ActiveDevice.Action1) return;
+            // The UI input module and Tick() poll this too; only RunRound's skip loop is overridden.
+            if (!DirectCallerIsRunRound()) return;
+            // In the skip loop a client only ever skips when the host did.
+            __result = Pending && Armed;
+            if (__result)
+            {
+                Pending = false;
+                Armed = false;
+                Plugin.Trace("Sync[C]: synthetic skip press");
+            }
+        }
+    }
+
+    [HarmonyPatch(typeof(SkipInstructions), nameof(SkipInstructions.Show))]
+    internal static class SkipPromptShownPatch
+    {
+        private static void Postfix()
+        {
+            if (MatchSync.IsClient) { ForcedSkipPressPatch.Armed = true; Plugin.Trace("Sync[C]: skip prompt shown, pending=" + ForcedSkipPressPatch.Pending); }
         }
     }
 
@@ -300,9 +369,11 @@ namespace WandWarsMP.Sync
     [HarmonyPatch(typeof(MatchTypeExtensions), nameof(MatchTypeExtensions.IsSkippable))]
     internal static class IsSkippablePatch
     {
+        private static readonly System.Collections.Generic.HashSet<int> tracedRound = new System.Collections.Generic.HashSet<int>();
         private static void Postfix(ref bool __result)
         {
-            if (MatchSync.IsClient && Game.Match != null) __result = false;
+            // Clients keep the game's own answer: they enter the skip-wait at the same moment as the
+            // host, but the skip itself only happens on the host's signal (see ForcedSkipPressPatch).
         }
     }
 

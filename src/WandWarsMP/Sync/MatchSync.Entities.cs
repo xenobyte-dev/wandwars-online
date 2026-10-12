@@ -252,3 +252,42 @@ namespace WandWarsMP.Sync
         }
     }
 }
+
+namespace WandWarsMP.Sync
+{
+    /// <summary>
+    /// The egg modes' referee says a random line before each round; its length sets spawn timing.
+    /// Clients say the host's line instead of rolling their own.
+    /// </summary>
+    [HarmonyLib.HarmonyPatch(typeof(WandWars.SpeechBubble), nameof(WandWars.SpeechBubble.Say))]
+    internal static class RefereeLinePatch
+    {
+        internal static string PendingLine;
+
+        private static bool IsRefereeLine(string v)
+        {
+            var g = WandWars.Game.GlobalResources;
+            return v != null && g != null &&
+                   (System.Array.IndexOf(g.RefereeTextHenHunt, v) >= 0 ||
+                    System.Array.IndexOf(g.RefereeTextKingOfTheCoop, v) >= 0 ||
+                    System.Array.IndexOf(g.RefereeTextLastHenStanding, v) >= 0);
+        }
+
+        private static void Prefix(ref string value)
+        {
+            if (!MatchSync.IsClient || !IsRefereeLine(value)) return;
+            if (PendingLine != null) { value = PendingLine; PendingLine = null; }
+        }
+
+        private static void Postfix(string value)
+        {
+            if (MatchSync.IsHost && WandWars.Game.Match != null && IsRefereeLine(value))
+            {
+                var net = Net.NetSession.Instance;
+                var w = net.Begin(Net.Msg.RefereeLine);
+                w.Str(value);
+                net.Broadcast(w, true);
+            }
+        }
+    }
+}

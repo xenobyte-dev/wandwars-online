@@ -40,6 +40,8 @@ namespace WandWarsMP.Net
         EntityDespawn = 49, // u16 id
         EntityDeath = 50,   // u16 id, Source
         Beast = 51,         // u8 player (Last Hen Standing beast pick)
+        RefereeLine = 52,   // str: referee's pre-round line (keeps spawn timing identical)
+        FastForward = 53,   // u8 round: host skipped the rest of the round (all humans dead)
         MatchStats = 45,    // end-of-match per-player stats (score screen)
         ShotDead = 44,      // u8 caster, vec2 pos: an arcane shot hit something on the host    // host ended the match early: everyone back to the menu
         PostMatch = 36,     // host left the score screen: everyone back to the lobby
@@ -53,7 +55,7 @@ namespace WandWarsMP.Net
     public static class Protocol
     {
         /// <summary>Bump on any wire-format change. Peers with different values refuse each other.</summary>
-        public const ushort Version = 11;
+        public const ushort Version = 12;
         public const int DefaultPort = 27420;
     }
 }

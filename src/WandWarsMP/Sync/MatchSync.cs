@@ -377,6 +377,7 @@ namespace WandWarsMP.Sync
 
             var m = Game.Match;
             if (m == null) return;
+            PumpDeferred();
             using (Replay.Begin())
             {
                 foreach (var kv in clientMoves)
