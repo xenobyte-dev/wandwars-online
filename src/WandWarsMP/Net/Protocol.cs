@@ -65,7 +65,7 @@ namespace WandWarsMP.Net
     public static class Protocol
     {
         /// <summary>Bump on any wire-format change. Peers with different values refuse each other.</summary>
-        public const ushort Version = 17;
+        public const ushort Version = 18;
         public const int DefaultPort = 27420;
     }
 }

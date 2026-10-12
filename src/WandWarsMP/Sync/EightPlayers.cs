@@ -101,7 +101,8 @@ namespace WandWarsMP.Sync
         {
             if (spawn == null || spawn.SpawnPoints == null || spawn.SpawnPoints.Length == 0) return;
             var points = spawn.SpawnPoints.ToList();
-            if (points.Count >= needed) return;
+            if (points.Count >= needed && needed <= 4) return;
+            if (points.Any(p => p.name.Contains("_wwmp"))) return; // already done for this spawner
 
             var play = SingletonBehaviour<PlayArea>.Instance;
             int originals = points.Count;
@@ -119,6 +120,29 @@ namespace WandWarsMP.Sync
                 clone.name = src.name + "_wwmp" + points.Count;
                 clone.StartingPlayerNumber = (PlayerNumber)home++;
                 points.Add(clone);
+            }
+            // Team spawns (Merlinball etc.) are indexed per team: each team needs its share.
+            var teams = points.Take(originals).Select(p => p.TeamIndex).Distinct().OrderBy(t => t).ToList();
+            if (teams.Count > 1)
+            {
+                int perTeam = (needed + teams.Count - 1) / teams.Count;
+                foreach (int team in teams)
+                {
+                    var own = points.Take(originals).Where(p => p.TeamIndex == team).ToList();
+                    for (int k = 0; points.Count(p => p.TeamIndex == team) < perTeam && k < own.Count * Offsets.Length; k++)
+                    {
+                        var src = own[k % own.Count];
+                        Vector3 pos = src.transform.position + (Vector3)Offsets[(k / own.Count) % Offsets.Length];
+                        if (play != null && !play.OverlapsPlayArea(pos)) continue;
+                        if (points.Any(p => Vector2.Distance(p.transform.position, pos) < 1.2f)) continue;
+                        var cloneGo = EightPlayers.CloneUnder(src.gameObject, src.transform.parent);
+                        cloneGo.transform.position = pos;
+                        var clone = cloneGo.GetComponent<PlayerSpawnPoint>();
+                        clone.name = src.name + "_wwmpT" + points.Count;
+                        clone.StartingPlayerNumber = PlayerNumber.None;
+                        points.Add(clone);
+                    }
+                }
             }
             // Fallback: never leave the spawn sequence short (it indexes points by player).
             for (int k = 0; points.Count < needed; k++) points.Add(points[k % originals]);
@@ -474,6 +498,22 @@ namespace WandWarsMP.Sync
             int n = match.Players.Count;
             float s = n > 4 ? Mathf.Min(1f, 8.5f / (2 * n - 1)) : 1f;
             __instance.Container.localScale = new Vector3(s, s, 1f);
+        }
+    }
+
+    /// <summary>
+    /// Leaving character select destroys the skin previews while confirmed boxes' coroutines still read
+    /// the current skin for one more frame (NRE that kills the coroutine). Return no skin instead.
+    /// </summary>
+    [HarmonyPatch(typeof(SkinSelectionCharacter), nameof(SkinSelectionCharacter.CurrentSkin), MethodType.Getter)]
+    internal static class SkinPreviewGuardPatch
+    {
+        private static bool Prefix(SkinSelectionCharacter __instance, ref CharacterSkin __result)
+        {
+            var skins = Traverse.Create(__instance).Field("_skins").GetValue<List<CharacterSkin>>();
+            if (skins != null && __instance.CurrentSkinIndex < skins.Count) return true;
+            __result = null;
+            return false;
         }
     }
 }

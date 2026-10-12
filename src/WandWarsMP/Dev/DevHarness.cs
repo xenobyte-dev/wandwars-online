@@ -235,7 +235,16 @@ namespace WandWarsMP.Dev
             {
                 var boxes = HarmonyLib.Traverse.Create(cs).Field("boxes").GetValue<CharacterSelectionBox[]>();
                 boxes[0].SetState(CharacterSelectionBox.SelectionState.Confirmed);
-                // bots=N: fill the boxes after the humans with N CPU players.
+                // Confirm the online players' boxes too, so a slow client tap can't be left out.
+                for (int i = 1; i <= net.Remotes.Count && i < boxes.Length; i++)
+                    if (boxes[i].State == CharacterSelectionBox.SelectionState.Active) boxes[i].SetState(CharacterSelectionBox.SelectionState.Confirmed);
+                // bots=N: fill the boxes after the humans with N CPU players (clear bots saved earlier).
+                for (int i = net.Remotes.Count + 1; i < boxes.Length; i++)
+                    if (boxes[i].SelectionConfig.IsBot)
+                    {
+                        boxes[i].SelectionConfig.Difficulty = -1;
+                        boxes[i].SetState(CharacterSelectionBox.SelectionState.Inactive);
+                    }
                 int bots = int.Parse(Get("bots", "0"));
                 for (int i = net.Remotes.Count + 1; i < boxes.Length && bots > 0; i++, bots--)
                 {
@@ -258,7 +267,7 @@ namespace WandWarsMP.Dev
                         string want = Get("modename", "arcane arena");
                         var b = ms.ModeCarousel.Buttons.FirstOrDefault(x => x.ButtonText != null && x.ButtonText.text.Trim().ToLower() == want);
                         if (b != null) ms.ModeCarousel.SetItem(b);
-                        Plugin.Trace("DevHarness: host mode -> " + (b != null ? want : "not found: " + want));
+                        Plugin.Trace("DevHarness: host mode -> " + (b != null ? want : "not found: " + want + " in [" + string.Join("|", ms.ModeCarousel.Buttons.Select(x => x.ButtonText != null ? x.ButtonText.text : x.name).ToArray()) + "]"));
                     }
                 }
                 if (Game.State is MatchBase mb && mb.MatchState == MatchState.ScoreScreen) break;
