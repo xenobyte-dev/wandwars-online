@@ -39,7 +39,7 @@ namespace WandWarsMP.Sync
 
         // ---- host ----
 
-        internal ushort HostRegisterEntity(GameObject go, string prefabName = null)
+        internal ushort HostRegisterEntity(GameObject go, string prefabName = null, GameEntity master = null)
         {
             if (go == null) return 0;
             var ne = go.GetComponent<NetEntity>();
@@ -55,6 +55,8 @@ namespace WandWarsMP.Sync
             w.U16(ne.Id);
             w.Str(ne.Prefab);
             w.Vec2(go.transform.position);
+            var masterNe = master != null ? master.GetComponent<NetEntity>() : null;
+            w.U16(masterNe != null ? masterNe.Id : (ushort)0);
             net.Broadcast(w, true);
             return ne.Id;
         }
@@ -88,6 +90,8 @@ namespace WandWarsMP.Sync
                 w.U16(kv.Key);
                 w.Vec2(rb != null ? rb.position : (Vector2)e.transform.position);
                 w.Vec2(rb != null ? rb.velocity : Vector2.zero);
+                var ge = e.GetComponent<GameEntity>();
+                w.I16((short)(ge != null ? ge.Health : 0));
             }
         }
 
@@ -110,7 +114,10 @@ namespace WandWarsMP.Sync
             {
                 ushort id = r.U16();
                 Vector2 pos = r.Vec2(), vel = r.Vec2();
+                int health = r.I16();
                 if (!netEntities.TryGetValue(id, out var ne) || ne == null || !ne.isActiveAndEnabled) continue;
+                var ge = ne.GetComponent<GameEntity>();
+                if (ge != null) ge.Health = health;
                 var rb = ne.GetComponent<Rigidbody2D>();
                 if (rb == null) { ne.transform.position = pos; continue; }
                 Vector2 err = pos - rb.position;
@@ -141,6 +148,7 @@ namespace WandWarsMP.Sync
             ushort id = r.U16();
             string prefabName = r.Str();
             Vector2 pos = r.Vec2();
+            ushort masterId = r.U16();
             if (netEntities.ContainsKey(id)) return;
             var prefab = FindPrefab(prefabName);
             if (prefab == null) { Plugin.Trace("Sync[C]: unknown entity prefab " + prefabName); return; }
@@ -154,6 +162,15 @@ namespace WandWarsMP.Sync
             ne.Id = id;
             ne.Prefab = prefabName;
             netEntities[id] = ne;
+            var master = masterId != 0 ? EntityById(masterId) : null;
+            var entity = go.GetComponent<GameEntity>();
+            if (master != null && entity != null)
+            {
+                // Summoned minion: same allegiance as on the host.
+                entity.BecomeAMinionOf(master);
+                go.AddComponent<SummonedMinion>();
+                if (entity.Inventory != null) entity.Inventory.Disabled = true;
+            }
             var spawner = SingletonBehaviour<TimedPrefabSpawner>.Instance;
             if (spawner != null && spawner.SpawnEffectPrefab != null && spawner.SpawnEffectPrefab.Length > 0)
                 Staple.Scene.InstantiateInScene(spawner.SpawnEffectPrefab[0], go.transform.position, Quaternion.identity);

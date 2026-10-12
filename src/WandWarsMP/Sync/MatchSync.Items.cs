@@ -44,7 +44,9 @@ namespace WandWarsMP.Sync
             w.Reset();
             w.U8((byte)Msg.ItemSpawn);
             w.U16(mark.Id);
-            w.Str(item.PowerupName);
+            // Most items are known by PowerupName; others (boss loot, respawn gems) by prefab name.
+            bool known = !string.IsNullOrEmpty(item.PowerupName) && Game.GlobalResources.Items.ContainsKey(item.PowerupName);
+            w.Str(known ? item.PowerupName : "#" + PrefabName(item.gameObject));
             w.Vec2(item.transform.position);
             w.Bool(item.IsInBubble);
             net.Broadcast(w, true);
@@ -131,7 +133,14 @@ namespace WandWarsMP.Sync
             Vector2 pos = r.Vec2();
             bool inBubble = r.Bool();
             if (itemsById.ContainsKey(id)) return;
-            if (!Game.GlobalResources.Items.TryGetValue(name, out var entry) || entry.Prefab == null)
+            Object prefab = null;
+            if (name.StartsWith("#"))
+            {
+                var go = FindPrefab(name.Substring(1));
+                prefab = go != null ? go.GetComponent<PowerupItem>() : null;
+            }
+            else if (Game.GlobalResources.Items.TryGetValue(name, out var entry)) prefab = entry.Prefab;
+            if (prefab == null)
             {
                 Plugin.Trace("Sync[C]: unknown item " + name);
                 return;
@@ -140,7 +149,7 @@ namespace WandWarsMP.Sync
             SpawningNetItem = true;
             try
             {
-                item = Object.Instantiate(entry.Prefab, pos, Quaternion.identity) as PowerupItem;
+                item = Object.Instantiate(prefab, pos, Quaternion.identity) as PowerupItem;
                 item.gameObject.AddComponent<NetItem>().Id = id;
             }
             finally { SpawningNetItem = false; }

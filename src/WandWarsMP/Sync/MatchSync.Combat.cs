@@ -50,6 +50,7 @@ namespace WandWarsMP.Sync
             roundWinners.Clear();
             roundsOver.Clear();
             tauntsDone.Clear();
+            ResetSpellstorm();
             fastForwardRound = -1;
             roundsAwaitingScore.Clear();
             hostRoundOverSent = -1;
@@ -398,12 +399,16 @@ namespace WandWarsMP.Sync
             int preHealth = r.U8();
             bool died = r.Bool();
             int postHealth = r.I16();
+            // A source spell/ball without an owner yet (ownership arrives via snapshots) would crash the
+            // game's friendly-fire check; hit without a source then (death still uses a real source).
+            var srcSpell = src != null ? src.GetComponent(typeof(ISpell)) as ISpell : null;
+            var hitSrc = srcSpell != null && srcSpell.Owner == null ? pc.gameObject : src; // never null: Die(null) crashes
             using (Replay.Begin())
             {
                 pc.SetImmunityTime(0f);
                 // Survived on the host (e.g. shield absorbed it): replay effects without a lethal outcome.
                 pc.Health = died ? preHealth : preHealth + amount + 1;
-                pc.TakeDamage(amount, src);
+                pc.TakeDamage(amount, hitSrc);
                 if (!died && pc != null) pc.Health = postHealth;
                 bool stillAlive = pc != null && pc.Player != null && pc.Player.Entities.Contains(pc);
                 Plugin.Trace($"Sync[C]: damage P{(int)pc.Player.PlayerNumber + 1} amt={amount} src={src.name} died={died} aliveAfterReplay={stillAlive}");
@@ -733,6 +738,14 @@ namespace WandWarsMP.Sync
                 case Msg.EntityDeath: OnEntityDeath(ref r); break;
                 case Msg.Beast: OnBeast(ref r); break;
                 case Msg.SubMatch: OnSubMatch(ref r); break;
+                case Msg.BossBind:
+                case Msg.EntityAbility:
+                case Msg.EntityAction:
+                case Msg.Barrier:
+                case Msg.PortalEnter:
+                case Msg.SpellstormStage:
+                    OnSpellstormMessage(msg, ref r);
+                    break;
                 case Msg.TauntDone:
                 {
                     int tr = r.U8();

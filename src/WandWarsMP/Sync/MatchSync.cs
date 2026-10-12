@@ -155,16 +155,32 @@ namespace WandWarsMP.Sync
             net.Broadcast(w, true);
         }
 
+        private readonly Dictionary<ushort, Vector2> hostEntityMoves = new Dictionary<ushort, Vector2>();
+        private readonly Dictionary<ushort, Vector2> clientEntityMoves = new Dictionary<ushort, Vector2>();
+
         public void HostRecordMove(GameEntity pc, Vector2 dir)
         {
             byte num = PlayerNum(pc);
-            if (num != NoPlayer) hostMoves[num] = dir;
+            if (num != NoPlayer) { hostMoves[num] = dir; return; }
+            var ne = pc.GetComponent<NetEntity>();
+            if (ne != null) hostEntityMoves[ne.Id] = dir;
         }
 
         public void HostRecordAbility(GameEntity pc, byte ability)
         {
             byte num = PlayerNum(pc);
-            if (num == NoPlayer) return;
+            if (num == NoPlayer)
+            {
+                var ne = pc.GetComponent<NetEntity>();
+                if (ne == null) return;
+                var we = net.Begin(Msg.EntityAbility);
+                we.U16(ne.Id);
+                we.U8(ability);
+                we.I8(Quant(pc.LastMoveDirection.x));
+                we.I8(Quant(pc.LastMoveDirection.y));
+                net.Broadcast(we, true);
+                return;
+            }
             var w = net.Begin(Msg.Ability);
             w.U8(num);
             w.U8(ability);
@@ -212,8 +228,16 @@ namespace WandWarsMP.Sync
                 w.I8(Quant(kv.Value.x));
                 w.I8(Quant(kv.Value.y));
             }
+            w.U8((byte)hostEntityMoves.Count);
+            foreach (var kv in hostEntityMoves)
+            {
+                w.U16(kv.Key);
+                w.I8(Quant(kv.Value.x));
+                w.I8(Quant(kv.Value.y));
+            }
             net.Broadcast(w, false);
             hostMoves.Clear();
+            hostEntityMoves.Clear();
 
             HostTrackBalls();
             HostTrackItems();
@@ -391,6 +415,13 @@ namespace WandWarsMP.Sync
                     var actor = ActorOf(kv.Key) as ICharacterActor;
                     if (actor != null) actor.Move(kv.Value);
                 }
+                foreach (var kv in clientEntityMoves)
+                {
+                    if (kv.Value == Vector2.zero) continue;
+                    var ent = EntityById(kv.Key);
+                    var actor = ent as ICharacterActor;
+                    if (actor != null && ent.isActiveAndEnabled) actor.Move(kv.Value);
+                }
             }
         }
 
@@ -437,6 +468,13 @@ namespace WandWarsMP.Sync
             {
                 byte num = r.U8();
                 clientMoves[num] = new Vector2(r.I8() / 127f, r.I8() / 127f);
+            }
+            clientEntityMoves.Clear();
+            int ne = r.U8();
+            for (int i = 0; i < ne; i++)
+            {
+                ushort id = r.U16();
+                clientEntityMoves[id] = new Vector2(r.I8() / 127f, r.I8() / 127f);
             }
         }
 

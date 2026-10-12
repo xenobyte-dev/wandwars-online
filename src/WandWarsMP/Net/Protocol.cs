@@ -36,7 +36,7 @@ namespace WandWarsMP.Net
         MatchAbort = 43,
         Scores = 46,        // absolute player (score, chickens, lives) + team scores, on change
         Respawn = 47,       // u8 player, u8 spawnPoint, bool ball, bool immunity
-        EntitySpawn = 48,   // u16 id, str prefab, vec2 pos (non-player entity)
+        EntitySpawn = 48,   // u16 id, str prefab, vec2 pos, u16 masterId (non-player entity)
         EntityDespawn = 49, // u16 id
         EntityDeath = 50,   // u16 id, Source
         Beast = 51,         // u8 player (Last Hen Standing beast pick)
@@ -45,6 +45,12 @@ namespace WandWarsMP.Net
         SubMatch = 54,      // Medley/Eggnarok: the host's next sub-match (type, level, config, teams, scores)
         TauntDone = 55,     // u8 round: host finished its post-round winner taunt
         TauntPlay = 56,     // u8 player: host's player taunts (time-freezing cinematic)
+        BossBind = 57,      // u16 id, u8 bossIndex: bind both sides' identically generated boss
+        EntityAbility = 58, // u16 id, u8 ability, i8 lx, i8 ly
+        EntityAction = 59,  // u16 id, u8 action, vec2 arg (knight special/shield/teleport)
+        Barrier = 60,       // i32 code: host finished a host-paced sequence (boss intro, victory)
+        PortalEnter = 61,   // u8 player
+        SpellstormStage = 62, // str: next Spellstorm stage
         MatchStats = 45,    // end-of-match per-player stats (score screen)
         ShotDead = 44,      // u8 caster, vec2 pos: an arcane shot hit something on the host    // host ended the match early: everyone back to the menu
         PostMatch = 36,     // host left the score screen: everyone back to the lobby
@@ -58,7 +64,7 @@ namespace WandWarsMP.Net
     public static class Protocol
     {
         /// <summary>Bump on any wire-format change. Peers with different values refuse each other.</summary>
-        public const ushort Version = 15;
+        public const ushort Version = 16;
         public const int DefaultPort = 27420;
     }
 }

@@ -11,7 +11,7 @@ namespace WandWarsMP
     {
         public const string Guid = "wandwarsmp";
         public const string Name = "Wand Wars Online";
-        public const string Version = "0.5.0";
+        public const string Version = "0.6.0";
 
         internal static ManualLogSource Log;
 

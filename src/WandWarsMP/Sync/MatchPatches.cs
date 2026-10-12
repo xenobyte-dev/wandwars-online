@@ -10,9 +10,10 @@ namespace WandWarsMP.Sync
     [HarmonyPatch(typeof(GameLobby), nameof(GameLobby.CreateMatch))]
     internal static class CreateMatchPatch
     {
-        private static void Postfix(string level, List<Player> players, MatchConfig config)
+        private static void Postfix(string level, List<Player> players, MatchConfig config, MatchBase __result)
         {
-            if (MatchSync.IsHost) MatchSync.Instance.HostOnMatchCreated(level, players, config);
+            // The created match's actual level (e.g. Spellstorm picks a random stage when none is given).
+            if (MatchSync.IsHost) MatchSync.Instance.HostOnMatchCreated(__result != null && !string.IsNullOrEmpty(__result.LevelName) ? __result.LevelName : level, players, config);
         }
     }
 
@@ -20,9 +21,12 @@ namespace WandWarsMP.Sync
     [HarmonyPatch(typeof(Player), nameof(Player.AddEntity))]
     internal static class AddEntityPatch
     {
-        private static void Postfix(GameEntity entity)
+        private static void Postfix(Player __instance, GameEntity entity)
         {
             if (!MatchSync.IsClient || entity == null) return;
+            // Non-match owners (Spellstorm's boss player) still need their AI during setup (boss
+            // configuration writes into it); those are stripped after setup instead.
+            if (Game.Match != null && !Game.Match.Players.Contains(__instance)) return;
             var input = entity.GetComponent<PlayerInput>();
             if (input != null) Object.DestroyImmediate(input);
             StripAI(entity.gameObject);

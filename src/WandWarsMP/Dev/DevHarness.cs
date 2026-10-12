@@ -338,11 +338,15 @@ namespace WandWarsMP.Dev
         {
             var net = Net.NetSession.Ensure();
             net.LocalName = "TestClient";
-            // Circle movement, tap A once a second.
-            net.Capture.Script = t => new Net.ScriptedInput
+            // Circle movement, tap A once a second; walk into a portal when one is open (Spellstorm).
+            net.Capture.Script = t =>
             {
-                Move = new Vector2(Mathf.Cos(t), Mathf.Sin(t)),
-                Buttons = (t % 1f) < 0.1f ? Net.InputState.A : 0,
+                var move = new Vector2(Mathf.Cos(t), Mathf.Sin(t));
+                var portal = FindObjectOfType<TrialPortal>();
+                var me = Game.Match != null ? Game.Match.Players.FirstOrDefault(p => !p.IsBot && p.HasEntities) : null;
+                if (portal != null && me != null && me.Entities[0] != null)
+                    move = ((Vector2)(portal.transform.position - me.Entities[0].transform.position)).normalized;
+                return new Net.ScriptedInput { Move = move, Buttons = (t % 1f) < 0.1f ? Net.InputState.A : 0 };
             };
             net.StartClient(Get("connect", "127.0.0.1"), int.Parse(Get("port", Net.Protocol.DefaultPort.ToString())));
             float end = Time.realtimeSinceStartup + float.Parse(Get("seconds", "30"));
