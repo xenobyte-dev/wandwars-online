@@ -81,14 +81,63 @@ namespace WandWarsMP.Sync
             hostMoves.Clear();
             ResetCombat();
             ResetItems();
+            ApplyHostInputDelay(players);
             Plugin.Trace($"Sync: MatchStart sent ({config.MatchType} on '{level}', {players.Count} players, seed {seed})");
+        }
+
+        // ---- host fairness ----
+
+        private readonly List<DelayedInputDevice> delayedDevices = new List<DelayedInputDevice>();
+
+        private void ApplyHostInputDelay(List<Player> players)
+        {
+            string mode = (Plugin.HostInputDelay.Value ?? "auto").Trim().ToLower();
+            if (mode == "off" || mode == "0" || net.Remotes.Count == 0) return;
+            foreach (var p in players)
+            {
+                var dev = p.InputDevice;
+                if (p.IsBot || dev == null || dev is NetInputDevice || dev is DelayedInputDevice) continue;
+                var delayed = new DelayedInputDevice(dev) { Delay = CurrentHostDelay() };
+                InControl.InputManager.AttachDevice(delayed);
+                delayedDevices.Add(delayed);
+                Traverse.Create(p).Property("InputDevice").SetValue(delayed);
+                Traverse.Create(p).Field("actions").SetValue(PlayerInput.GetActionsForDevice(delayed));
+            }
+            if (delayedDevices.Count > 0) Plugin.Trace($"Sync: host input delay {CurrentHostDelay() * 1000f:F0}ms on {delayedDevices.Count} local player(s)");
+        }
+
+        private float CurrentHostDelay()
+        {
+            string mode = (Plugin.HostInputDelay.Value ?? "auto").Trim().ToLower();
+            if (mode != "auto" && float.TryParse(mode, out float ms)) return Mathf.Max(0, ms) / 1000f;
+            float sum = 0; int n = 0;
+            foreach (var rp in net.Remotes.Values)
+            {
+                float rtt = net.GetRtt(rp.Peer);
+                if (rtt >= 0) { sum += rtt; n++; }
+            }
+            float half = n == 0 ? 0 : sum / n / 2f;
+            return Mathf.Min(half, Plugin.HostInputDelayCapMs.Value) / 1000f;
+        }
+
+        private void UpdateHostInputDelay()
+        {
+            if (delayedDevices.Count == 0) return;
+            if (!(Game.State is MatchBase))
+            {
+                foreach (var d in delayedDevices) InControl.InputManager.DetachDevice(d);
+                delayedDevices.Clear();
+                return;
+            }
+            float target = CurrentHostDelay();
+            foreach (var d in delayedDevices) d.Delay = Mathf.MoveTowards(d.Delay, target, 0.002f); // drift slowly
         }
 
         private byte OwnerOf(InControl.InputDevice device)
         {
             foreach (var rp in net.Remotes.Values)
                 if (rp.Device == device) return rp.Slot;
-            return 0;
+            return 0; // host-local (including its delayed wrapper)
         }
 
         public void HostSendRoundSpawn(int round, int[] points, Player ballPlayer)
@@ -132,6 +181,7 @@ namespace WandWarsMP.Sync
 
         private void LateUpdate()
         {
+            if (IsHost) UpdateHostInputDelay();
             if (net == null || !IsHost || net.Remotes.Count == 0 || !(Game.State is MatchBase)) return;
             tick++;
 

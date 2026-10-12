@@ -234,6 +234,11 @@ namespace WandWarsMP.Sync
             var ball = BallById(r.U16());
             Vector2 offset = r.Vec2(), preVel = r.Vec2();
             if (pc == null || ball == null || pc.CatchSpell == null) return;
+            if (!ball.gameObject.activeInHierarchy || !pc.gameObject.activeInHierarchy)
+            {
+                Plugin.Trace("Sync[C]: catch skipped (ball or catcher inactive locally)");
+                return;
+            }
             var cs = pc.CatchSpell;
             // Recreate the host's pre-catch geometry so HandleCatch's own checks pass.
             ball.UnlockOwner();
@@ -255,7 +260,7 @@ namespace WandWarsMP.Sync
             var ball = BallById(r.U16());
             Vector2 dir = r.Vec2();
             int speed = r.U8();
-            if (pc == null || ball == null || pc.CatchSpell == null) return;
+            if (pc == null || ball == null || pc.CatchSpell == null || !ball.gameObject.activeInHierarchy) return;
             var cs = pc.CatchSpell;
             var info = cs.HeldBalls.Find(x => x.Ball == ball);
             cs.Direction = dir;
