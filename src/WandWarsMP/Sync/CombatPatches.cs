@@ -59,20 +59,32 @@ namespace WandWarsMP.Sync
     [HarmonyPatch(typeof(CatchSpell), "HandleCatch")]
     internal static class HandleCatchPatch
     {
-        private struct State { public int Held; public Vector2 Offset; }
+        private struct State { public int Held; public Vector2 Offset; public bool Predicted; }
 
         private static bool Prefix(CatchSpell __instance, CatchSpell.BallInfo ballInfo, out State __state)
         {
             __state = new State { Held = __instance.HeldBalls.Count };
             if (ballInfo?.Ball != null)
                 __state.Offset = (Vector2)(ballInfo.Ball.transform.position - __instance.transform.position);
+            var sync = MatchSync.Instance;
+            if (sync == null || Game.Match == null) return true;
+            // Host: an online player's catches come only from their claims (lag-compensated).
+            if (MatchSync.IsHost && !MatchSync.ApplyingClaim && sync.IsRemoteHumanCatchSpell(__instance)) return false;
+            // Client: our own swing catches immediately (claimed to the host in the postfix).
+            if (MatchSync.IsClient && !BallReplay.Active && sync.IsLocalCatchSpell(__instance))
+            {
+                if (sync.RecentlyRejected(ballInfo?.Ball)) return false;
+                __state.Predicted = true;
+                return true;
+            }
             return !Authority.BlockLocalBall;
         }
 
         private static void Postfix(CatchSpell __instance, CatchSpell.BallInfo ballInfo, State __state)
         {
-            if (Authority.HostSending && __instance.HeldBalls.Count > __state.Held)
-                MatchSync.Instance.HostOnCatch(__instance, ballInfo, __state.Offset);
+            if (__instance.HeldBalls.Count <= __state.Held) return;
+            if (Authority.HostSending) MatchSync.Instance.HostOnCatch(__instance, ballInfo, __state.Offset);
+            else if (__state.Predicted) MatchSync.Instance.ClientOnPredictedCatch(__instance, ballInfo, __state.Offset);
         }
     }
 
@@ -117,20 +129,26 @@ namespace WandWarsMP.Sync
     [HarmonyPatch(typeof(GameEntity), nameof(GameEntity.TakeDamage))]
     internal static class TakeDamagePatch
     {
-        internal struct State { public int Health; public byte Num; }
+        internal struct State { public int Health; public byte Num; public bool Skipped; }
 
-        private static bool Prefix(GameEntity __instance, ref bool __result, out State __state)
+        private static bool Prefix(GameEntity __instance, int amount, GameObject damageSource, ref bool __result, out State __state)
         {
             // Resolve the player before the hit runs: a lethal hit removes the entity from its player.
             __state = new State { Health = __instance.Health, Num = MatchSync.PlayerNum(__instance) };
-            if (Authority.BlockLocal) { __result = false; return false; }
+            if (Authority.BlockLocal) { __result = false; __state.Skipped = true; return false; }
+            if (Authority.HostSending && MatchSync.Instance.HostDeferBallHit(__instance, amount, damageSource))
+            {
+                __result = false;
+                __state.Skipped = true;
+                return false;
+            }
             if (Authority.HostSending) MatchSync.DamageDepth++;
             return true;
         }
 
         private static void Postfix(GameEntity __instance, int amount, GameObject damageSource, bool __result, State __state)
         {
-            if (!Authority.HostSending) return;
+            if (__state.Skipped || !Authority.HostSending) return;
             MatchSync.DamageDepth--;
             if (__result)
                 MatchSync.Instance.HostOnDamage(__instance, __state.Num, amount, damageSource, __state.Health, __instance.Health <= 0);

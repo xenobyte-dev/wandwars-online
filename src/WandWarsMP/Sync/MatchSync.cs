@@ -93,11 +93,16 @@ namespace WandWarsMP.Sync
         // ---- host fairness ----
 
         private readonly List<DelayedInputDevice> delayedDevices = new List<DelayedInputDevice>();
+        private readonly List<Player> delayedPlayers = new List<Player>();
+        /// <summary>The delay is installed when the match is created (still in the lobby); only clean up
+        /// after the match has actually run and the game has left it.</summary>
+        private bool delayMatchSeen;
 
         private void ApplyHostInputDelay(List<Player> players)
         {
             string mode = (Plugin.HostInputDelay.Value ?? "auto").Trim().ToLower();
             if (mode == "off" || mode == "0" || net.Remotes.Count == 0) return;
+            delayMatchSeen = false;
             foreach (var p in players)
             {
                 var dev = p.InputDevice;
@@ -105,10 +110,26 @@ namespace WandWarsMP.Sync
                 var delayed = new DelayedInputDevice(dev) { Delay = CurrentHostDelay() };
                 InControl.InputManager.AttachDevice(delayed);
                 delayedDevices.Add(delayed);
-                Traverse.Create(p).Property("InputDevice").SetValue(delayed);
-                Traverse.Create(p).Field("actions").SetValue(PlayerInput.GetActionsForDevice(delayed));
+                delayedPlayers.Add(p);
+                SetPlayerDevice(p, delayed);
             }
             if (delayedDevices.Count > 0) Plugin.Trace($"Sync: host input delay {CurrentHostDelay() * 1000f:F0}ms on {delayedDevices.Count} local player(s)");
+        }
+
+        /// <summary>Back to the real controllers (players are reused for rematches and menus).</summary>
+        private void RemoveHostInputDelay()
+        {
+            foreach (var p in delayedPlayers)
+                if (p.InputDevice is DelayedInputDevice d) SetPlayerDevice(p, d.Source);
+            foreach (var d in delayedDevices) InControl.InputManager.DetachDevice(d);
+            delayedDevices.Clear();
+            delayedPlayers.Clear();
+        }
+
+        private static void SetPlayerDevice(Player p, InControl.InputDevice device)
+        {
+            Traverse.Create(p).Property("InputDevice").SetValue(device);
+            Traverse.Create(p).Field("actions").SetValue(PlayerInput.GetActionsForDevice(device));
         }
 
         private float CurrentHostDelay()
@@ -128,10 +149,10 @@ namespace WandWarsMP.Sync
         private void UpdateHostInputDelay()
         {
             if (delayedDevices.Count == 0) return;
-            if (!(Game.State is MatchBase))
+            if (Game.State is MatchBase) delayMatchSeen = true;
+            else
             {
-                foreach (var d in delayedDevices) InControl.InputManager.DetachDevice(d);
-                delayedDevices.Clear();
+                if (delayMatchSeen || !net.IsConnected) RemoveHostInputDelay();
                 return;
             }
             float target = CurrentHostDelay();
@@ -365,6 +386,11 @@ namespace WandWarsMP.Sync
 
         private void OnMessage(int peer, Msg msg, ref NetReader r)
         {
+            if (IsHost)
+            {
+                if (msg == Msg.CatchClaim) HostOnCatchClaim(peer, ref r);
+                return;
+            }
             if (!IsClient) return;
             switch (msg)
             {
@@ -374,6 +400,7 @@ namespace WandWarsMP.Sync
                 case Msg.Ability: OnAbility(ref r); break;
                 case Msg.Snapshot: OnSnapshot(ref r); break;
                 case Msg.WorldSnapshot: OnWorldSnapshot(ref r); break;
+                case Msg.CatchReject: OnCatchReject(ref r); break;
                 default: OnCombatMessage(msg, ref r); break;
             }
         }
@@ -416,6 +443,7 @@ namespace WandWarsMP.Sync
             var m = Game.Match;
             if (m == null) return;
             PumpDeferred();
+            ClientUpdatePredictedCatches();
             using (Replay.Begin())
             {
                 foreach (var kv in clientMoves)
@@ -541,7 +569,14 @@ namespace WandWarsMP.Sync
                 var pc = ActorOf(num);
                 var rb = pc != null ? pc.Rigidbody2D : null;
                 if (rb == null || !pc.gameObject.activeInHierarchy) continue;
-                if (Predict && num == localNum) { Reconcile(rb, pos, inSeq); continue; }
+                if (Predict && num == localNum)
+                {
+                    // Frozen holding a ball: both sides stand still at the catch spot; don't drag.
+                    var own = pc as PlayerController;
+                    if (HasPredictedCatch || (own != null && own.CatchSpell != null && own.CatchSpell.Holding)) continue;
+                    Reconcile(rb, pos, inSeq);
+                    continue;
+                }
                 Vector2 err = pos - rb.position;
                 float mag = err.magnitude;
                 AvgCorrection = AvgCorrection * 0.95f + mag * 0.05f;

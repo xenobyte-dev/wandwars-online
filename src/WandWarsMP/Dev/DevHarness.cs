@@ -234,6 +234,11 @@ namespace WandWarsMP.Dev
             if (cs != null)
             {
                 var boxes = HarmonyLib.Traverse.Create(cs).Field("boxes").GetValue<CharacterSelectionBox[]>();
+                if (Get("hostdevice", "") == "keyboard")
+                {
+                    var kb = InControl.InputManager.Devices.FirstOrDefault(d => d is KeyboardDevice);
+                    if (kb != null) boxes[0].SetInputDevice(kb);
+                }
                 boxes[0].SetState(CharacterSelectionBox.SelectionState.Confirmed);
                 // Confirm the online players' boxes too, so a slow client tap can't be left out.
                 for (int i = 1; i <= net.Remotes.Count && i < boxes.Length; i++)
@@ -254,6 +259,7 @@ namespace WandWarsMP.Dev
                 Plugin.Trace("DevHarness: host confirmed own box; boxes=" + string.Join(",", boxes.Select(b => b.State + ":" + (b.Device != null ? b.Device.Name : "-")).ToArray()));
             }
             string last = null;
+            float nextHostProbe = 0f;
             while (Time.realtimeSinceStartup < deadline)
             {
                 string cur = Game.State is GameLobby ? (GameLobby.CurrentPanel != null ? GameLobby.CurrentPanel.name : "?") : StateName();
@@ -271,6 +277,16 @@ namespace WandWarsMP.Dev
                     }
                 }
                 if (Game.State is MatchBase mb && mb.MatchState == MatchState.ScoreScreen) break;
+                if (Game.State is MatchBase mb2 && Time.realtimeSinceStartup > nextHostProbe)
+                {
+                    nextHostProbe = Time.realtimeSinceStartup + 1f;
+                    var hp = mb2.Players.FirstOrDefault(x => !x.IsBot && !(x.InputDevice is Net.NetInputDevice));
+                    var he = hp != null ? hp.PrimaryEntity : null;
+                    var dd = hp != null ? hp.InputDevice as Net.DelayedInputDevice : null;
+                    Plugin.Trace("DevHarness: host player " + (he != null ? (Vector2)he.transform.position : Vector2.zero)
+                        + " device=" + (hp?.InputDevice?.GetType().Name ?? "-") + " attached=" + (hp?.InputDevice?.IsAttached ?? false)
+                        + (dd != null ? " source=" + dd.Source.Name + " srcRight=" + dd.Source.GetControl(InControl.InputControlType.LeftStickRight).Value + " delayedRight=" + dd.GetControl(InControl.InputControlType.LeftStickRight).Value : ""));
+                }
                 yield return null;
             }
             while (!(Game.State is GameLobby) && Time.realtimeSinceStartup < deadline) yield return null;
@@ -378,6 +394,7 @@ namespace WandWarsMP.Dev
         {
             var net = Net.NetSession.Ensure();
             net.LocalName = "TestClient";
+            bool autoCatch = Get("autocatch", "false") == "true";
             // Circle movement, tap A once a second; walk into a portal when one is open (Spellstorm).
             net.Capture.Script = t =>
             {
@@ -386,7 +403,24 @@ namespace WandWarsMP.Dev
                 var me = Game.Match != null ? Game.Match.Players.FirstOrDefault(p => !p.IsBot && p.HasEntities) : null;
                 if (portal != null && me != null && me.Entities[0] != null)
                     move = ((Vector2)(portal.transform.position - me.Entities[0].transform.position)).normalized;
-                return new Net.ScriptedInput { Move = move, Buttons = (t % 1f) < 0.1f ? Net.InputState.A : 0 };
+                int buttons = (t % 1f) < 0.1f ? Net.InputState.A : 0;
+                if (autoCatch && me != null && me.Entities.Count > 0 && me.Entities[0] != null)
+                {
+                    // Swing when a ball is close and coming at us (exercises catch prediction).
+                    Vector2 mine = me.Entities[0].transform.position;
+                    buttons = 0;
+                    foreach (var b in Ball.Balls)
+                    {
+                        if (b == null || b.CurrentCatchSpell != null) continue;
+                        Vector2 d = mine - (Vector2)b.transform.position;
+                        if (d.magnitude < 3.5f && Vector2.Dot(b.Rigidbody2D.velocity, d) > 0f)
+                        {
+                            buttons = Net.InputState.A;
+                            move = d.normalized * -1f; // face the ball (swing direction = last move)
+                        }
+                    }
+                }
+                return new Net.ScriptedInput { Move = move, Buttons = buttons };
             };
             net.StartClient(Get("connect", "127.0.0.1"), int.Parse(Get("port", Net.Protocol.DefaultPort.ToString())));
             float end = Time.realtimeSinceStartup + float.Parse(Get("seconds", "30"));

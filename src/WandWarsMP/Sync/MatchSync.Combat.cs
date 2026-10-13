@@ -47,6 +47,11 @@ namespace WandWarsMP.Sync
         {
             ballIds.Clear();
             ballsById.Clear();
+            predictedCatches.Clear();
+            ballHistory.Clear();
+            pendingClaims.Clear();
+            rejectedAt.Clear();
+            deferredHits.Clear();
             roundWinners.Clear();
             roundsOver.Clear();
             tauntsDone.Clear();
@@ -93,6 +98,9 @@ namespace WandWarsMP.Sync
         private void HostTrackBalls()
         {
             foreach (var b in Ball.Balls) HostBallId(b);
+            HostRecordBallHistory();
+            HostUpdatePendingClaims();
+            HostUpdateDeferredHits();
             scratchBalls.Clear();
             foreach (var kv in ballIds)
                 if (kv.Key == null || !kv.Key.isActiveAndEnabled) scratchBalls.Add(kv.Key);
@@ -138,6 +146,7 @@ namespace WandWarsMP.Sync
                 var state = (Ball.BallState)r.U8();
                 byte owner = r.U8();
                 if (!ballsById.TryGetValue(id, out var b) || b == null) continue;
+                if (predictedCatches.ContainsKey(b)) continue; // held locally, awaiting the host's verdict
                 var rb = b.Rigidbody2D;
                 bool held = b.CurrentCatchSpell != null;
                 if (!held)
@@ -242,6 +251,16 @@ namespace WandWarsMP.Sync
             var ball = BallById(r.U16());
             Vector2 offset = r.Vec2(), preVel = r.Vec2();
             if (pc == null || ball == null || pc.CatchSpell == null) return;
+            if (predictedCatches.ContainsKey(ball))
+            {
+                if (pc.CatchSpell.HeldBalls.Exists(x => x.Ball == ball))
+                {
+                    predictedCatches.Remove(ball); // our claim confirmed
+                    if (Dev.DevMode.Enabled) Plugin.Trace("Sync[C]: catch confirmed");
+                    return;
+                }
+                UndoPredictedCatch(ball); // someone else got it first
+            }
             if (!ball.gameObject.activeInHierarchy || !pc.gameObject.activeInHierarchy)
             {
                 Plugin.Trace("Sync[C]: catch skipped (ball or catcher inactive locally)");
