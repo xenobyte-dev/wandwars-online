@@ -33,6 +33,7 @@ namespace WandWarsMP
             UI.NativeOnlineMenu.Ensure();
             Sync.MenuSync.Ensure();
             Plugin.Root.AddComponent<UI.OnlinePanel>();
+            Plugin.Root.AddComponent<UI.PingOverlay>();
             try { Dev.DevHarness.TryStart(Plugin.Root); }
             catch (Exception e) { Plugin.Trace("DevHarness failed: " + e); }
         }

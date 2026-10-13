@@ -19,7 +19,8 @@ Play
   (their arenas/HUD are built for 4); Eggnarok and Medley skip King of the Coop.
 
   Advanced: F2 opens a small panel for direct-IP play (LAN / port-forwarded UDP 27420).
-  BepInEx\config\wandwarsmp.cfg: HostInputDelay (auto/off/ms) keeps things fair for online players.
+  BepInEx\config\wandwarsmp.cfg: ShowPing (ping in the top-left corner during online matches, on by
+  default) and HostFairnessDelay (off by default: the host plays with zero added delay).
 
 Uninstall
   Delete winhttp.dll from the game folder (or the BepInEx folder too).

@@ -51,6 +51,7 @@ namespace WandWarsMP.Net
         Barrier = 60,       // i32 code: host finished a host-paced sequence (boss intro, victory)
         PortalEnter = 61,   // u8 player
         SpellstormStage = 62, // str: next Spellstorm stage
+        HazardState = 66,   // (unreliable) u8 n, n x (i32 hazard key, vec2 pos)
         CatchClaim = 64,    // client->host u16 ball, vec2 offset, vec2 preVel, vec2 catcherPos
         CatchReject = 65,   // host->client u16 ball
         WorldSnapshot = 63, // (unreliable) u32 tick, items, entities, eggs
@@ -67,7 +68,7 @@ namespace WandWarsMP.Net
     public static class Protocol
     {
         /// <summary>Bump on any wire-format change. Peers with different values refuse each other.</summary>
-        public const ushort Version = 19;
+        public const ushort Version = 20;
         public const int DefaultPort = 27420;
     }
 }

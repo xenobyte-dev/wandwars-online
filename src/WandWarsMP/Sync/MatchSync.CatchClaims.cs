@@ -168,6 +168,7 @@ namespace WandWarsMP.Sync
             var pc = player != null ? ActiveEntity(player) as PlayerController : null;
             var ball = BallById(id);
             string why = ValidateClaim(peer, pc, ball, catcherPos + offset, Time.realtimeSinceStartup - c.Since);
+            if (Dev.DevMode.Enabled && ball != null) Plugin.Trace($"Sync[H]: claim error {Vector2.Distance(ball.Rigidbody2D.position, catcherPos + offset):F2} (ball speed {ball.Rigidbody2D.velocity.magnitude:F0})");
             if (why != null && why.StartsWith("not swinging") && !final) return false;
             if (why == null)
             {

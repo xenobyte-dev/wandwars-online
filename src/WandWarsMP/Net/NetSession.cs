@@ -52,7 +52,9 @@ namespace WandWarsMP.Net
 
         /// <summary>Client: fired every frame with the input just sent to the host (for local prediction).</summary>
         public event Action<ushort, InputState> LocalInputSent;
-        private float nextPing;
+        private float nextPing, nextRttTrace, inputAccum;
+        /// <summary>Client input packets: at most 120 per second, whatever the frame rate.</summary>
+        private const float InputInterval = 1f / 120f;
         private readonly Dictionary<int, float> rttMs = new Dictionary<int, float>();
 
         /// <summary>Smoothed ping/pong round trip in ms (includes frame-loop delay on both ends), -1 if unknown.</summary>
@@ -160,8 +162,10 @@ namespace WandWarsMP.Net
                 if (Role == NetRole.Host) Broadcast(m, false); else SendTo(0, m, false);
             }
 
-            if (Role == NetRole.Client && LocalSlot >= 0)
+            inputAccum += Time.unscaledDeltaTime;
+            if (Role == NetRole.Client && LocalSlot >= 0 && inputAccum >= InputInterval)
             {
+                inputAccum = Mathf.Min(inputAccum - InputInterval, InputInterval);
                 var m = Begin(Msg.Input);
                 ushort seq = inputSeq++;
                 var input = Capture.Sample();
@@ -235,6 +239,11 @@ namespace WandWarsMP.Net
                     {
                         float sample = (Clock() - r.F32()) * 1000f;
                         rttMs[peer] = rttMs.TryGetValue(peer, out var old) ? old * 0.8f + sample * 0.2f : sample;
+                        if (Dev.DevMode.Enabled && Clock() > nextRttTrace)
+                        {
+                            nextRttTrace = Clock() + 2f;
+                            Plugin.Trace($"Net: rtt sample {sample:F0}ms avg {rttMs[peer]:F0}ms state={WandWars.Game.State?.GetType().Name} fps={1f / UnityEngine.Time.smoothDeltaTime:F0}");
+                        }
                         return;
                     }
                 }

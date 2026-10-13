@@ -114,7 +114,7 @@ namespace WandWarsMP.Net
             sendBuf[0] = PktData;
             Buffer.BlockCopy(data, offset, sendBuf, 1, count);
             SteamNetworking.SendP2PPacket(p.Steam, sendBuf, (uint)(count + 1),
-                reliable ? EP2PSend.k_EP2PSendReliable : EP2PSend.k_EP2PSendUnreliable, Channel);
+                reliable ? EP2PSend.k_EP2PSendReliable : EP2PSend.k_EP2PSendUnreliableNoDelay, Channel);
             p.LastSent = clock();
         }
 

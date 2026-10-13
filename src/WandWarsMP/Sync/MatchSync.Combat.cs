@@ -49,6 +49,7 @@ namespace WandWarsMP.Sync
             ballsById.Clear();
             predictedCatches.Clear();
             ballHistory.Clear();
+            ResetTimeAlign();
             pendingClaims.Clear();
             rejectedAt.Clear();
             deferredHits.Clear();
@@ -149,12 +150,7 @@ namespace WandWarsMP.Sync
                 if (predictedCatches.ContainsKey(b)) continue; // held locally, awaiting the host's verdict
                 var rb = b.Rigidbody2D;
                 bool held = b.CurrentCatchSpell != null;
-                if (!held)
-                {
-                    Vector2 err = pos - rb.position;
-                    if (err.magnitude > SnapDistance) rb.position = pos; else rb.position += err * PosBlend;
-                    rb.velocity = vel;
-                }
+                if (!held) ClientCorrectBall(b, pos, vel);
                 b.NormalizedSpeed = speed;
                 if (Mathf.Abs(b.Size - size) > 0.01f) b.Size = size;
                 if (b.State != state) b.SetState(state);
@@ -185,6 +181,7 @@ namespace WandWarsMP.Sync
             b.NormalizedSpeed = speed;
             b.Size = size;
             b.Rigidbody2D.velocity = vel;
+            ClientAdvanceReleasedBall(b);
         }
 
         private void OnBallDespawn(ref NetReader r)
@@ -253,7 +250,7 @@ namespace WandWarsMP.Sync
             if (pc == null || ball == null || pc.CatchSpell == null) return;
             if (predictedCatches.ContainsKey(ball))
             {
-                if (pc.CatchSpell.HeldBalls.Exists(x => x.Ball == ball))
+                if (pc.CatchSpell.HeldBalls.Exists(x => x.Ball == ball) || ownLaunched.Contains(ball))
                 {
                     predictedCatches.Remove(ball); // our claim confirmed
                     if (Dev.DevMode.Enabled) Plugin.Trace("Sync[C]: catch confirmed");
@@ -290,6 +287,13 @@ namespace WandWarsMP.Sync
             if (pc == null || ball == null || pc.CatchSpell == null || !ball.gameObject.activeInHierarchy) return;
             var cs = pc.CatchSpell;
             var info = cs.HeldBalls.Find(x => x.Ball == ball);
+            if (ownLaunched.Contains(ball) && info == null)
+            {
+                // We already threw it on our own timer; just take the host's speed.
+                ownLaunched.Remove(ball);
+                ball.NormalizedSpeed = speed;
+                return;
+            }
             cs.Direction = dir;
             if (info != null)
             {
@@ -306,6 +310,7 @@ namespace WandWarsMP.Sync
                 ball.SetDirection(dir);
             }
             ball.NormalizedSpeed = speed;
+            ClientAdvanceReleasedBall(ball);
         }
 
         private void OnRelease(ref NetReader r)
@@ -322,6 +327,13 @@ namespace WandWarsMP.Sync
             }
             if (pc == null || pc.CatchSpell == null) return;
             var cs = pc.CatchSpell;
+            bool own = IsLocalCatchSpell(cs);
+            if (own)
+            {
+                // Released on our own input already: only the host's speeds apply.
+                foreach (var kv in speeds) { kv.Key.NormalizedSpeed = kv.Value; ownLaunched.Remove(kv.Key); }
+                if (cs.HeldBalls.Count == 0) return;
+            }
             cs.Direction = dir;
             BallReplay.Active = true;
             try { cs.ReleaseAllBalls(); }
@@ -336,6 +348,7 @@ namespace WandWarsMP.Sync
                     kv.Key.SetState(Ball.BallState.Normal);
                     kv.Key.SetDirection(dir);
                 }
+                if (!own) ClientAdvanceReleasedBall(kv.Key);
             }
         }
 

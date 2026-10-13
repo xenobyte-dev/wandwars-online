@@ -20,7 +20,9 @@ namespace WandWarsMP.Sync
         public const byte NoPlayer = 255;
         public const byte AbOne = 1, AbOneRelease = 2, AbTwo = 3, AbThree = 4, AbThreeRelease = 5, AbFour = 6;
 
-        private const int SnapshotEveryFrames = 3;
+        /// <summary>Host send rates: frame messages (move relays) 60 Hz, snapshots 30 Hz.</summary>
+        private const float FrameInterval = 1f / 60f, SnapshotInterval = 1f / 30f;
+        private float frameAccum, snapAccum;
         private const float SnapDistance = 2.5f;
         private const float PosBlend = 0.25f;
 
@@ -238,6 +240,19 @@ namespace WandWarsMP.Sync
         {
             if (IsHost) UpdateHostInputDelay();
             if (net == null || !IsHost || net.Remotes.Count == 0 || !(Game.State is MatchBase)) return;
+
+            // Fixed network rates, independent of the render frame rate (a 240 fps host would otherwise
+            // flood the connection and Steam's send-rate limiter would queue packets = added latency).
+            HostTrackBalls();
+            HostTrackItems();
+            HostTrackScores();
+            HostTrackEntities();
+            HostSendHazards();
+            float dt = Time.unscaledDeltaTime;
+            frameAccum += dt;
+            snapAccum += dt;
+            if (frameAccum < FrameInterval) return;
+            frameAccum = Mathf.Min(frameAccum - FrameInterval, FrameInterval);
             tick++;
 
             var w = net.Begin(Msg.Frame);
@@ -260,11 +275,11 @@ namespace WandWarsMP.Sync
             hostMoves.Clear();
             hostEntityMoves.Clear();
 
-            HostTrackBalls();
-            HostTrackItems();
-            HostTrackScores();
-            HostTrackEntities();
-            if (tick % SnapshotEveryFrames == 0) SendSnapshot();
+            if (snapAccum >= SnapshotInterval)
+            {
+                snapAccum = Mathf.Min(snapAccum - SnapshotInterval, SnapshotInterval);
+                SendSnapshot();
+            }
         }
 
         private void SendSnapshot()
@@ -401,6 +416,7 @@ namespace WandWarsMP.Sync
                 case Msg.Snapshot: OnSnapshot(ref r); break;
                 case Msg.WorldSnapshot: OnWorldSnapshot(ref r); break;
                 case Msg.CatchReject: OnCatchReject(ref r); break;
+                case Msg.HazardState: OnHazardState(ref r); break;
                 default: OnCombatMessage(msg, ref r); break;
             }
         }
@@ -444,6 +460,7 @@ namespace WandWarsMP.Sync
             if (m == null) return;
             PumpDeferred();
             ClientUpdatePredictedCatches();
+            ClientRecordBallHistory();
             using (Replay.Begin())
             {
                 foreach (var kv in clientMoves)
@@ -577,7 +594,7 @@ namespace WandWarsMP.Sync
                     Reconcile(rb, pos, inSeq);
                     continue;
                 }
-                Vector2 err = pos - rb.position;
+                Vector2 err = RemoteTarget(pos, vel) - rb.position;
                 float mag = err.magnitude;
                 AvgCorrection = AvgCorrection * 0.95f + mag * 0.05f;
                 if (mag > SnapDistance) { rb.position = pos; Snaps++; }

@@ -240,7 +240,14 @@ namespace WandWarsMP.Sync
     [HarmonyPatch(typeof(LastHenStanding), "TransformRandomPlayer")]
     internal static class LhsTransformPatch
     {
-        private static bool Prefix() => !MatchSync.IsClient || Replay.Active;
+        private static bool Prefix(LastHenStanding __instance)
+        {
+            if (MatchSync.IsClient && !Replay.Active) return false;
+            // A player whose wizard is already gone can't become the beast (the game would crash).
+            var pool = Traverse.Create(__instance).Field("playerPool").GetValue<System.Collections.Generic.List<Player>>();
+            pool?.RemoveAll(p => p == null || p.PrimaryEntity == null);
+            return true;
+        }
 
         private static void Postfix(LastHenStanding __instance)
         {

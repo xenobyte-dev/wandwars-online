@@ -5,7 +5,7 @@
     <AssemblyName>WandWarsMP</AssemblyName>
     <RootNamespace>WandWarsMP</RootNamespace>
     <LangVersion>latest</LangVersion>
-    <Version>0.7.1</Version>
+    <Version>0.8.0</Version>
     <Nullable>disable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>

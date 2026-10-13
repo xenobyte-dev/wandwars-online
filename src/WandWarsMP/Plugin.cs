@@ -11,13 +11,14 @@ namespace WandWarsMP
     {
         public const string Guid = "wandwarsmp";
         public const string Name = "Wand Wars Online";
-        public const string Version = "0.7.1";
+        public const string Version = "0.8.0";
 
         internal static ManualLogSource Log;
 
         /// <summary>"auto" (half the average client round trip, capped), "off", or a fixed value in ms.</summary>
         internal static BepInEx.Configuration.ConfigEntry<string> HostInputDelay;
         internal static BepInEx.Configuration.ConfigEntry<int> HostInputDelayCapMs;
+        internal static BepInEx.Configuration.ConfigEntry<bool> ShowPing;
 
         /// <summary>Persistent object holding all mod MonoBehaviours. Created once the game boots.</summary>
         internal static GameObject Root;
@@ -39,8 +40,11 @@ namespace WandWarsMP
         private void Awake()
         {
             Log = Logger;
-            HostInputDelay = Config.Bind("Netcode", "HostInputDelay", "auto",
-                "Delay the host's own controls so everyone's actions reach the game equally late. auto = half the average ping of online players; off; or a number of milliseconds.");
+            // Renamed from HostInputDelay (default was auto) so old configs don't keep the delay on:
+            // lag-compensated catching now handles fairness and the host should feel like local play.
+            HostInputDelay = Config.Bind("Netcode", "HostFairnessDelay", "off",
+                "Optional: delay the host's own controls so everyone's actions reach the game equally late. off (default, host plays with zero delay); auto = half the average ping of online players; or a number of milliseconds.");
+            ShowPing = Config.Bind("Netcode", "ShowPing", true, "Show the round-trip ping in the top-left corner during online matches.");
             HostInputDelayCapMs = Config.Bind("Netcode", "HostInputDelayCapMs", 60, "Upper bound for the automatic host input delay.");
             try { File.Delete(TracePath); } catch { }
             Log.LogInfo($"{Name} {Version} loaded.");

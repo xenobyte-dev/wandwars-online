@@ -94,12 +94,16 @@ namespace WandWarsMP.Sync
         private static bool Prefix(CatchSpell __instance, CatchSpell.BallInfo ballInfo, out bool __state)
         {
             __state = ballInfo != null && ballInfo.Rigidbody2D != null && __instance.HeldBalls.Contains(ballInfo);
+            // Client: our own throw runs on our own hold timer (the host's timer matches it).
+            if (MatchSync.IsClient && !BallReplay.Active && MatchSync.Instance != null && MatchSync.Instance.IsOwnPredictedLaunch(__instance)) return true;
             return !Authority.BlockLocalBall;
         }
 
         private static void Postfix(CatchSpell __instance, CatchSpell.BallInfo ballInfo, bool __state)
         {
             if (Authority.HostSending && __state) MatchSync.Instance.HostOnLaunch(__instance, ballInfo);
+            else if (__state && MatchSync.IsClient && !BallReplay.Active && MatchSync.Instance.IsOwnPredictedLaunch(__instance))
+                MatchSync.Instance.ClientOnOwnLaunch(ballInfo.Ball);
         }
     }
 
@@ -109,18 +113,22 @@ namespace WandWarsMP.Sync
         private static bool Prefix(CatchSpell __instance, out List<Ball> __state)
         {
             __state = null;
-            if (Authority.HostSending && __instance.HeldBalls.Count > 0)
+            bool ownPredicted = MatchSync.IsClient && !BallReplay.Active && MatchSync.Instance != null && MatchSync.Instance.IsOwnPredictedLaunch(__instance);
+            if ((Authority.HostSending || ownPredicted) && __instance.HeldBalls.Count > 0)
             {
                 __state = new List<Ball>();
                 foreach (var info in __instance.HeldBalls)
                     if (info.Rigidbody2D != null && info.Ball != null) __state.Add(info.Ball);
             }
+            if (ownPredicted) return true; // our early release happens right away on our screen
             return !Authority.BlockLocalBall;
         }
 
         private static void Postfix(CatchSpell __instance, List<Ball> __state)
         {
-            if (__state != null && __state.Count > 0) MatchSync.Instance.HostOnRelease(__instance, __state);
+            if (__state == null || __state.Count == 0) return;
+            if (Authority.HostSending) MatchSync.Instance.HostOnRelease(__instance, __state);
+            else foreach (var b in __state) MatchSync.Instance.ClientOnOwnLaunch(b);
         }
     }
 

@@ -273,7 +273,7 @@ namespace WandWarsMP.Dev
                         string want = Get("modename", "arcane arena");
                         var b = ms.ModeCarousel.Buttons.FirstOrDefault(x => x.ButtonText != null && x.ButtonText.text.Trim().ToLower() == want);
                         if (b != null) ms.ModeCarousel.SetItem(b);
-                        Plugin.Trace("DevHarness: host mode -> " + (b != null ? want : "not found: " + want + " in [" + string.Join("|", ms.ModeCarousel.Buttons.Select(x => x.ButtonText != null ? x.ButtonText.text : x.name).ToArray()) + "]"));
+                        Plugin.Trace("DevHarness: host mode -> " + (b != null ? want : "not found: " + want + " in [" + string.Join("|", ms.ModeCarousel.Buttons.Where(x => x != null).Select(x => x.ButtonText != null ? x.ButtonText.text : x.name).ToArray()) + "]"));
                     }
                 }
                 if (Game.State is MatchBase mb && mb.MatchState == MatchState.ScoreScreen) break;
